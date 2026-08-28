@@ -1,9 +1,10 @@
 // WebRTC Full-Mesh Ses Yöneticisi (MeshManager)
 // Her kullanıcı, odadaki diğer her katılımcı ile doğrudan p2p ses akışı kurar.
-// Hotspot / internetsiz geçişte RTCDataChannel üzerinden doğrudan ICE restart desteği sağlar.
+// Motosiklet kask rüzgarı ve egzoz gürültüsü için donanımsal ve yazılımsal DSP ses filtresi uygular.
 
 import { AudioLevelMeter } from './audioMeter.js';
 import { registerPeerName, unregisterPeerName } from './announcer.js';
+import { createMotorcycleAudioFilter } from './audioFilter.js';
 
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -26,7 +27,9 @@ export class MeshManager {
 
     // peerId -> { pc, dataChannel, audioEl, stream, levelMeter, name, state, disconnectTimeout, isMuted, stats, pendingCandidates }
     this.peers = new Map();
+    this.rawLocalStream = null;
     this.localStream = null;
+    this.dspFilter = null;
     this.localLevelMeter = null;
     this.isMuted = false;
     this.statsInterval = null;
@@ -34,19 +37,27 @@ export class MeshManager {
 
   async init() {
     try {
-      // Motosiklet ortamına optimize edilmiş mikrofon kısıtlamaları
-      this.localStream = await navigator.mediaDevices.getUserMedia({
+      // 1. Aşama: Donanımsal gürültü engelleme
+      this.rawLocalStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
           channelCount: 1,
           sampleRate: 48000,
+          googEchoCancellation: true,
+          googAutoGainControl: true,
+          googNoiseSuppression: true,
+          googHighpassFilter: true,
         },
         video: false,
       });
 
-      // Kendi ses seviyemizi ölçen meter
+      // 2. Aşama: Motosiklet DSP Filtre Zinciri (Rüzgar & Egzoz kesici)
+      this.dspFilter = createMotorcycleAudioFilter(this.rawLocalStream);
+      this.localStream = this.dspFilter.filteredStream;
+
+      // Ses seviyesi ölçer
       this.localLevelMeter = new AudioLevelMeter(this.localStream, (level, isSpeaking) => {
         if (this.onLocalVolumeChange) {
           this.onLocalVolumeChange(this.isMuted ? 0 : level, !this.isMuted && isSpeaking);
@@ -75,14 +86,13 @@ export class MeshManager {
       iceCandidatePoolSize: 2,
     });
 
-    // Kendi ses track'imizi ekle
+    // Filtrelenmiş ses track'ini ekle
     if (this.localStream) {
       this.localStream.getAudioTracks().forEach((track) => {
         pc.addTrack(track, this.localStream);
       });
     }
 
-    // Karşı tarafın sesini oynatacak Audio elementi
     const audioEl = new Audio();
     audioEl.autoplay = true;
     audioEl.playsInline = true;
@@ -98,16 +108,16 @@ export class MeshManager {
       disconnectTimeout: null,
       isMuted: false,
       stats: { rtt: 0, packetLoss: 0, candidateType: 'bilinmiyor', isLocal: false },
-      pendingCandidates: [], // ICE adayları remoteDescription set edilene kadar burada bekletilir
+      pendingCandidates: [],
     };
 
-    // Karşıdan gelen ses akışı
+    // Karşıdan gelen ses
     pc.ontrack = (event) => {
-      console.log(`[MeshManager] 🔊 Ses akışı bağlandı (${peerId}):`, event.streams[0]);
+      console.log(`[MeshManager] 🔊 Ses bağlandı (${peerId}):`, event.streams[0]);
       const remoteStream = event.streams[0];
       peerEntry.stream = remoteStream;
       audioEl.srcObject = remoteStream;
-      audioEl.play().catch((e) => console.warn('[MeshManager] Audio autoplay uyarısı:', e.message));
+      audioEl.play().catch((e) => console.warn('[MeshManager] Audio play uyarısı:', e.message));
 
       if (peerEntry.levelMeter) {
         peerEntry.levelMeter.destroy();
@@ -119,26 +129,35 @@ export class MeshManager {
       });
     };
 
-    // ICE Candidate takası
+    // ICE Candidate takası (Saf JSON olarak paketle)
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        // Öncelik: Açık olan DataChannel üzerinden doğrudan karşıya gönder (internetsiz)
+        const candidatePayload = event.candidate.toJSON
+          ? event.candidate.toJSON()
+          : {
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex,
+            };
+
+        // DataChannel üzerinden doğrudan ilet
         if (peerEntry.dataChannel && peerEntry.dataChannel.readyState === 'open') {
           try {
             peerEntry.dataChannel.send(
               JSON.stringify({
                 type: 'ice-candidate',
-                candidate: event.candidate,
+                candidate: candidatePayload,
               })
             );
           } catch (_) {}
         }
-        // Sinyalleşme üzerinden ilet
-        this.sendSignal(peerId, { candidate: event.candidate });
+
+        // Sinyal sunucusu / Firebase üzerinden ilet
+        this.sendSignal(peerId, { candidate: candidatePayload });
       }
     };
 
-    // Bağlantı durumu izleme (connectionState ve iceConnectionState)
+    // Bağlantı durumu izleme
     const updateConnState = () => {
       const state = pc.connectionState;
       const iceState = pc.iceConnectionState;
@@ -152,18 +171,21 @@ export class MeshManager {
         }
         peerEntry.state = 'connected';
         this.notifyStateChange(peerId, 'connected');
+      } else if (state === 'connecting' || iceState === 'checking') {
+        peerEntry.state = 'connecting';
+        this.notifyStateChange(peerId, 'connecting');
       } else if (state === 'disconnected' || state === 'failed' || iceState === 'disconnected' || iceState === 'failed') {
         peerEntry.state = 'reconnecting';
         this.notifyStateChange(peerId, 'reconnecting');
 
         if (!peerEntry.disconnectTimeout) {
           peerEntry.disconnectTimeout = setTimeout(() => {
-            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
               peerEntry.state = 'failed';
               this.notifyStateChange(peerId, 'failed');
               this.onPeerDisconnect(peerId);
             }
-          }, 4500);
+          }, 6000);
         }
       }
     };
@@ -171,7 +193,6 @@ export class MeshManager {
     pc.onconnectionstatechange = updateConnState;
     pc.oniceconnectionstatechange = updateConnState;
 
-    // İnternetsiz haberleşme ve ICE takası için DataChannel oluştur
     try {
       const dc = pc.createDataChannel('control', { negotiated: false });
       this.setupDataChannel(peerId, dc, peerEntry);
@@ -189,7 +210,7 @@ export class MeshManager {
     peerEntry.dataChannel = dc;
 
     dc.onopen = () => {
-      console.log(`[DataChannel] Peer ile doğrudan kontrol kanalı açıldı: ${peerId}`);
+      console.log(`[DataChannel] Doğrudan p2p veri kanalı açıldı: ${peerId}`);
       try {
         dc.send(JSON.stringify({ type: 'mic-state', isMuted: this.isMuted }));
       } catch (_) {}
@@ -201,7 +222,7 @@ export class MeshManager {
 
         switch (msg.type) {
           case 'ice-restart-offer': {
-            console.log(`[DataChannel] Internetsiz ICE Restart teklifi alındı: ${peerId}`);
+            console.log(`[DataChannel] ICE Restart teklifi alındı: ${peerId}`);
             const pc = peerEntry.pc;
             await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
             const answer = await pc.createAnswer();
@@ -210,14 +231,14 @@ export class MeshManager {
             dc.send(
               JSON.stringify({
                 type: 'ice-restart-answer',
-                sdp: answer,
+                sdp: { type: answer.type, sdp: answer.sdp },
               })
             );
             break;
           }
 
           case 'ice-restart-answer': {
-            console.log(`[DataChannel] Internetsiz ICE Restart cevabı alındı: ${peerId}`);
+            console.log(`[DataChannel] ICE Restart cevabı alındı: ${peerId}`);
             const pc = peerEntry.pc;
             await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
             break;
@@ -252,7 +273,7 @@ export class MeshManager {
             break;
         }
       } catch (err) {
-        console.warn('[DataChannel] Mesaj işleme hatası:', err);
+        console.warn('[DataChannel] Mesaj hatası:', err);
       }
     };
   }
@@ -265,7 +286,11 @@ export class MeshManager {
         offerToReceiveAudio: true,
       });
       await pc.setLocalDescription(offer);
-      this.sendSignal(peerId, { sdp: offer, name });
+      // SDP'yi saf JSON olarak gönder
+      this.sendSignal(peerId, {
+        sdp: { type: offer.type, sdp: offer.sdp },
+        name,
+      });
     } catch (err) {
       console.error(`[MeshManager] ${peerId} için teklif oluşturulamadı:`, err);
     }
@@ -305,13 +330,14 @@ export class MeshManager {
         if (data.sdp.type === 'offer') {
           const answer = await pc.createAnswer({ offerToReceiveAudio: true });
           await pc.setLocalDescription(answer);
-          this.sendSignal(fromPeerId, { sdp: answer });
+          this.sendSignal(fromPeerId, {
+            sdp: { type: answer.type, sdp: answer.sdp },
+          });
         }
       } else if (data.candidate) {
         if (pc.remoteDescription && pc.remoteDescription.type) {
           await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
         } else {
-          // Henüz remoteDescription set edilmediyse kuyrukta beklet
           entry.pendingCandidates.push(data.candidate);
         }
       }
@@ -320,7 +346,6 @@ export class MeshManager {
     }
   }
 
-  // Hotspot / Ağ değişikliğinde SUNUCUSUZ yerel ICE Restart
   async restartIceForAllPeers() {
     console.log('[MeshManager] Tüm peerlar için ICE Restart başlatılıyor...');
     for (const [peerId, entry] of this.peers.entries()) {
@@ -329,16 +354,18 @@ export class MeshManager {
         const offer = await pc.createOffer({ iceRestart: true });
         await pc.setLocalDescription(offer);
 
+        const offerPayload = { type: offer.type, sdp: offer.sdp };
+
         if (entry.dataChannel && entry.dataChannel.readyState === 'open') {
           entry.dataChannel.send(
             JSON.stringify({
               type: 'ice-restart-offer',
-              sdp: offer,
+              sdp: offerPayload,
             })
           );
         }
 
-        this.sendSignal(peerId, { sdp: offer });
+        this.sendSignal(peerId, { sdp: offerPayload });
       } catch (err) {
         console.warn(`[MeshManager] ICE Restart hatası (${peerId}):`, err);
       }
@@ -347,6 +374,11 @@ export class MeshManager {
 
   setMute(isMuted) {
     this.isMuted = isMuted;
+    if (this.rawLocalStream) {
+      this.rawLocalStream.getAudioTracks().forEach((track) => {
+        track.enabled = !isMuted;
+      });
+    }
     if (this.localStream) {
       this.localStream.getAudioTracks().forEach((track) => {
         track.enabled = !isMuted;
@@ -471,9 +503,15 @@ export class MeshManager {
       this.localLevelMeter = null;
     }
 
-    if (this.localStream) {
-      this.localStream.getTracks().forEach((t) => t.stop());
-      this.localStream = null;
+    if (this.dspFilter) {
+      this.dspFilter.destroy();
+      this.dspFilter = null;
     }
+
+    if (this.rawLocalStream) {
+      this.rawLocalStream.getTracks().forEach((t) => t.stop());
+      this.rawLocalStream = null;
+    }
+    this.localStream = null;
   }
 }

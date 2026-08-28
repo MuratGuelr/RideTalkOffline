@@ -238,7 +238,6 @@ export class FirebaseSignalingClient {
           fromPeerId: signalData.fromPeerId,
           data: signalData.data,
         });
-        // Sinyal işlendikten sonra veritabanından temizle
         remove(snapshot.ref).catch(() => {});
       }
     });
@@ -250,14 +249,16 @@ export class FirebaseSignalingClient {
     if (!this.db || !this.currentRoom || !targetPeerId) return;
 
     try {
+      // Firebase'e sadece saf JSON objesi aktarılır
+      const cleanData = JSON.parse(JSON.stringify(data));
       const targetSignalsRef = ref(this.db, `rooms/${this.currentRoom}/signals/${targetPeerId}`);
       await push(targetSignalsRef, {
         fromPeerId: this.peerId,
-        data,
+        data: cleanData,
         timestamp: Date.now(),
       });
     } catch (err) {
-      console.warn('[FirebaseSignaling] Sinyal gönderme hatası:', err);
+      console.error('[FirebaseSignaling] Sinyal gönderme hatası:', err);
     }
   }
 

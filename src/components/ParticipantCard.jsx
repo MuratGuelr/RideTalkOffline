@@ -11,11 +11,13 @@ export default function ParticipantCard({
   stats = null,
 }) {
   const isConnected = connectionState === 'connected';
+  const isConnecting = connectionState === 'connecting';
   const isReconnecting = connectionState === 'reconnecting';
+  const isFailed = connectionState === 'failed';
 
   return (
     <div
-      className={`rider-card ${isSelf ? 'rider-self ' : ''}${isSpeaking && !isMuted ? 'rider-speaking ' : ''}${!isConnected ? 'rider-disconnected' : ''}`}
+      className={`rider-card ${isSelf ? 'rider-self ' : ''}${isSpeaking && !isMuted ? 'rider-speaking ' : ''}${isFailed ? 'rider-disconnected' : ''}`}
     >
       {/* Konuşma Parlama Halkası */}
       {isSpeaking && !isMuted && <div className="speaking-glow-ring"></div>}
@@ -25,8 +27,16 @@ export default function ParticipantCard({
           <User size={28} />
         </div>
         <div
-          className={`rider-status-dot ${isConnected ? 'dot-connected' : isReconnecting ? 'dot-reconnecting' : 'dot-failed'}`}
-          title={isConnected ? 'Bağlı' : isReconnecting ? 'Yeniden Bağlanıyor...' : 'Bağlantı Koptu'}
+          className={`rider-status-dot ${isConnected ? 'dot-connected' : (isConnecting || isReconnecting) ? 'dot-reconnecting' : 'dot-failed'}`}
+          title={
+            isConnected
+              ? 'Bağlı'
+              : isConnecting
+              ? 'Bağlantı Kuruluyor...'
+              : isReconnecting
+              ? 'Yeniden Bağlanıyor...'
+              : 'Bağlantı Koptu'
+          }
         />
       </div>
 
@@ -76,6 +86,8 @@ export default function ParticipantCard({
                 {stats?.rtt ? `${stats.rtt} ms` : '15 ms'}
               </span>
             </>
+          ) : isConnecting ? (
+            <span className="status-text text-yellow">Bağlantı Kuruluyor...</span>
           ) : isReconnecting ? (
             <span className="status-text text-yellow">Yeniden Bağlanıyor...</span>
           ) : (
