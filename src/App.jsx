@@ -137,10 +137,10 @@ export default function App() {
 
     // Ağ değişim izleyicisini kur
     if (unwatchNetworkRef.current) unwatchNetworkRef.current();
-    unwatchNetworkRef.current = watchNetworkChanges((reason, attemptNumber) => {
+    unwatchNetworkRef.current = watchNetworkChanges((reason) => {
       if (meshRef.current) {
-        meshRef.current.restartIceForAllPeers(attemptNumber);
-        if (attemptNumber === 0) showToast('Ağ değişimi algılandı, yeniden bağlanılıyor...');
+        showToast('Ağ değişimi algılandı, yeniden bağlanılıyor...');
+        meshRef.current.restartIceForAllPeers();
       }
     });
   }, [getSignalingClient, showToast]);

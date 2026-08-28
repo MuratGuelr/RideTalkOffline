@@ -159,18 +159,16 @@ export default function ActiveRoom({
         </div>
       )}
 
-      {/* 0 İnternet Çevrimdışı Hotspot Şeridi */}
-      <div className={`hotspot-banner-strip ${showReconnectQRPrompt ? 'reconnect-urgent' : ''}`} onClick={() => setIsOfflineQRModalOpen(true)}>
+      {/* Hotspot Geçiş Bilgi Şeridi */}
+      <div className="hotspot-banner-strip">
         <div className="hotspot-banner-content">
           <WifiOff size={16} className="text-orange animate-pulse" />
           <span>
-            {showReconnectQRPrompt
-              ? <><strong style={{ color: '#ff6b00' }}>⚠️ Bağlantı Koptu!</strong> QR ile yeniden eşleşin.</>
-              : <><strong>0 İnternet Hotspot Modu:</strong> İnternet yoksa doğrudan QR ile eşleşip konuşun.</>}
+            <strong>Hotspot Geçişi:</strong> Ağ değişirse otomatik yeniden bağlanır.
           </span>
         </div>
-        <button type="button" className={`btn-banner-guide ${showReconnectQRPrompt ? 'btn-urgent' : ''}`}>
-          {showReconnectQRPrompt ? '🔄 Yeniden Eşleş' : 'Çevrimdışı Eşleş'}
+        <button type="button" className="btn-banner-guide" onClick={() => setIsOfflineQRModalOpen(true)}>
+          Manuel Eşleş
         </button>
       </div>
 

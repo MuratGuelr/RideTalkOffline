@@ -1,21 +1,16 @@
 // WebRTC Full-Mesh Ses Yöneticisi (MeshManager)
-// Motosiklet kask sesi, hotspot geçişi, W3C Polite Peer, DSP filtresi.
-// Hotspot geçişinde DataChannel hayattayken yeni bağlantıyı kurar,
-// başarısız olursa dışarıya onReconnectionFailed callback bildirir.
+// Motosiklet kask interkomu: Hotspot geçişinde DataChannel üzerinden
+// ultra-hızlı ICE Restart ile otomatik yeniden bağlantı.
 
 import { AudioLevelMeter } from './audioMeter.js';
 import { registerPeerName, unregisterPeerName } from './announcer.js';
 import { createMotorcycleAudioFilter } from './audioFilter.js';
 
-// STUN sunucuları: İnternet olan normal modda kullanılır
 const ONLINE_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
 ];
-
-// STUN olmadan sadece yerel host adaylarını topla (0 internet hotspot)
-const LOCAL_ONLY_ICE_SERVERS = [];
 
 export class MeshManager {
   constructor(options = {}) {
@@ -37,7 +32,7 @@ export class MeshManager {
     this.localLevelMeter = null;
     this.isMuted = false;
     this.statsInterval = null;
-    this._reconnectionFailureTimer = null;
+    this._heartbeatInterval = null;
   }
 
   async init() {
@@ -49,10 +44,6 @@ export class MeshManager {
           autoGainControl: true,
           channelCount: 1,
           sampleRate: 48000,
-          googEchoCancellation: true,
-          googAutoGainControl: true,
-          googNoiseSuppression: true,
-          googHighpassFilter: true,
         },
         video: false,
       });
@@ -66,6 +57,7 @@ export class MeshManager {
         }
       });
 
+      this._startHeartbeat();
       this.startStatsMonitoring();
       return this.localStream;
     } catch (err) {
@@ -74,21 +66,29 @@ export class MeshManager {
     }
   }
 
+  // ========================================================
+  //  HEARTBEAT: DataChannel'ı sıcak tut + ağ bilgisi paylaş
+  //  Bu sayede ağ geçişinde DC daha uzun hayatta kalır
+  // ========================================================
+  _startHeartbeat() {
+    if (this._heartbeatInterval) clearInterval(this._heartbeatInterval);
+    this._heartbeatInterval = setInterval(() => {
+      this.broadcastDataChannel({ type: 'heartbeat', ts: Date.now(), peerId: this.myPeerId });
+    }, 2000);
+  }
+
+  // ========================================================
+  //  PEER CONNECTION OLUŞTURMA
+  // ========================================================
   createPeerConnection(peerId, name = '', useLocalOnly = false) {
     if (this.peers.has(peerId)) {
       return this.peers.get(peerId).pc;
     }
 
-    if (name) {
-      registerPeerName(peerId, name);
-    }
+    if (name) registerPeerName(peerId, name);
 
-    const iceServers = useLocalOnly ? LOCAL_ONLY_ICE_SERVERS : ONLINE_ICE_SERVERS;
-
-    const pc = new RTCPeerConnection({
-      iceServers,
-      iceCandidatePoolSize: 0,
-    });
+    const iceServers = useLocalOnly ? [] : ONLINE_ICE_SERVERS;
+    const pc = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 0 });
 
     if (this.localStream) {
       this.localStream.getAudioTracks().forEach((track) => {
@@ -111,19 +111,23 @@ export class MeshManager {
       name: name || 'Sürücü',
       state: 'connecting',
       disconnectTimeout: null,
+      reconnectTimer: null,
       isMuted: false,
       stats: { rtt: 0, packetLoss: 0, candidateType: 'host', isLocal: true },
       pendingCandidates: [],
       makingOffer: false,
       isPolite,
+      iceRestartAttempts: 0,
+      lastConnectedTime: 0,
     };
 
+    // ---- TRACK ----
     pc.ontrack = (event) => {
-      console.log(`[MeshManager] 🔊 Ses bağlandı (${peerId})`);
+      console.log(`[MeshManager] 🔊 Ses bağlandı: ${peerId}`);
       const remoteStream = event.streams[0];
       peerEntry.stream = remoteStream;
       audioEl.srcObject = remoteStream;
-      audioEl.play().catch((e) => console.warn('[MeshManager] Audio play:', e.message));
+      audioEl.play().catch(() => {});
 
       if (peerEntry.levelMeter) peerEntry.levelMeter.destroy();
       peerEntry.levelMeter = new AudioLevelMeter(remoteStream, (level, isSpeaking) => {
@@ -131,100 +135,101 @@ export class MeshManager {
       });
     };
 
+    // ---- ICE CANDIDATE ----
     pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        const payload = event.candidate.toJSON
-          ? event.candidate.toJSON()
-          : {
-              candidate: event.candidate.candidate,
-              sdpMid: event.candidate.sdpMid,
-              sdpMLineIndex: event.candidate.sdpMLineIndex,
-            };
+      if (!event.candidate) return;
+      const payload = event.candidate.toJSON ? event.candidate.toJSON() : {
+        candidate: event.candidate.candidate,
+        sdpMid: event.candidate.sdpMid,
+        sdpMLineIndex: event.candidate.sdpMLineIndex,
+      };
 
-        // 1. DataChannel üzerinden (internetsiz çalışır)
-        if (peerEntry.dataChannel && peerEntry.dataChannel.readyState === 'open') {
-          try {
-            peerEntry.dataChannel.send(JSON.stringify({ type: 'ice-candidate', candidate: payload }));
-          } catch (_) {}
-        }
-
-        // 2. Sinyal sunucusu üzerinden (internet varsa)
-        this.sendSignal(peerId, { candidate: payload });
+      // DataChannel üzerinden gönder (internetsiz çalışır)
+      if (peerEntry.dataChannel && peerEntry.dataChannel.readyState === 'open') {
+        try {
+          peerEntry.dataChannel.send(JSON.stringify({ type: 'ice-candidate', candidate: payload }));
+        } catch (_) {}
       }
+      // Firebase üzerinden de gönder (internet varsa)
+      this.sendSignal(peerId, { candidate: payload });
     };
 
+    // ---- BAĞLANTI DURUMU ----
     const updateConnState = () => {
-      const state = pc.connectionState;
+      const pcState = pc.connectionState;
       const iceState = pc.iceConnectionState;
-      console.log(`[MeshManager] (${peerId}): PC=${state} ICE=${iceState}`);
 
-      if (state === 'connected' || iceState === 'connected' || iceState === 'completed') {
+      if (pcState === 'connected' || iceState === 'connected' || iceState === 'completed') {
+        // ✅ BAĞLANDI
         if (peerEntry.disconnectTimeout) {
           clearTimeout(peerEntry.disconnectTimeout);
           peerEntry.disconnectTimeout = null;
-          this.onPeerReconnect(peerId);
         }
-        // Yeniden bağlantı zamanlayıcısını temizle
-        if (this._reconnectionFailureTimer) {
-          clearTimeout(this._reconnectionFailureTimer);
-          this._reconnectionFailureTimer = null;
+        if (peerEntry.reconnectTimer) {
+          clearTimeout(peerEntry.reconnectTimer);
+          peerEntry.reconnectTimer = null;
         }
-        peerEntry.state = 'connected';
-        this.notifyStateChange(peerId, 'connected');
-      } else if (state === 'connecting' || iceState === 'checking' || iceState === 'new') {
-        peerEntry.state = 'connecting';
-        this.notifyStateChange(peerId, 'connecting');
-      } else if (state === 'disconnected' || state === 'failed' || iceState === 'disconnected' || iceState === 'failed') {
+        peerEntry.iceRestartAttempts = 0;
+        peerEntry.lastConnectedTime = Date.now();
+
+        if (peerEntry.state !== 'connected') {
+          if (peerEntry.state === 'reconnecting') {
+            this.onPeerReconnect(peerId);
+          }
+          peerEntry.state = 'connected';
+          this.notifyStateChange(peerId, 'connected');
+        }
+      } else if (pcState === 'disconnected' || iceState === 'disconnected') {
+        // ⚠️ KOPTU - Hemen ICE Restart dene!
         peerEntry.state = 'reconnecting';
         this.notifyStateChange(peerId, 'reconnecting');
-
-        if (!peerEntry.disconnectTimeout) {
-          peerEntry.disconnectTimeout = setTimeout(() => {
-            if (
-              pc.connectionState !== 'connected' &&
-              pc.iceConnectionState !== 'connected' &&
-              pc.iceConnectionState !== 'completed'
-            ) {
-              peerEntry.state = 'failed';
-              this.notifyStateChange(peerId, 'failed');
-              this.onPeerDisconnect(peerId);
-            }
-          }, 10000);
-        }
+        this._immediateIceRestart(peerId);
+      } else if (pcState === 'failed' || iceState === 'failed') {
+        // ❌ BAŞARISIZ - Agresif yeniden deneme
+        peerEntry.state = 'reconnecting';
+        this.notifyStateChange(peerId, 'reconnecting');
+        this._immediateIceRestart(peerId);
+      } else if (pcState === 'connecting' || iceState === 'checking' || iceState === 'new') {
+        peerEntry.state = 'connecting';
+        this.notifyStateChange(peerId, 'connecting');
       }
     };
 
     pc.onconnectionstatechange = updateConnState;
     pc.oniceconnectionstatechange = updateConnState;
 
+    // ---- DATA CHANNEL ----
     try {
-      const dc = pc.createDataChannel('control', { negotiated: false });
-      this.setupDataChannel(peerId, dc, peerEntry);
+      const dc = pc.createDataChannel('control', { negotiated: true, id: 0 });
+      this._setupDataChannel(peerId, dc, peerEntry);
     } catch (_) {}
 
     pc.ondatachannel = (event) => {
-      this.setupDataChannel(peerId, event.channel, peerEntry);
+      this._setupDataChannel(peerId, event.channel, peerEntry);
     };
 
     this.peers.set(peerId, peerEntry);
     return pc;
   }
 
-  setupDataChannel(peerId, dc, peerEntry) {
+  // ========================================================
+  //  DATA CHANNEL KURULUMU (ICE Restart mesajları dahil)
+  // ========================================================
+  _setupDataChannel(peerId, dc, peerEntry) {
     peerEntry.dataChannel = dc;
 
     dc.onopen = () => {
-      console.log(`[DataChannel] Açıldı: ${peerId}`);
+      console.log(`[DataChannel] ✅ Açıldı: ${peerId}`);
       try { dc.send(JSON.stringify({ type: 'mic-state', isMuted: this.isMuted })); } catch (_) {}
     };
 
     dc.onmessage = async (event) => {
       try {
         const msg = JSON.parse(event.data);
-
         switch (msg.type) {
+          // ⭐ ICE Restart Teklifi (DataChannel üzerinden - internetsiz çalışır!)
           case 'ice-restart-offer': {
-            console.log(`[DataChannel] ICE Restart teklifi alındı: ${peerId}`);
+            console.log(`[DC] ICE Restart teklifi alındı: ${peerId}`);
             const pc = peerEntry.pc;
             try {
               if (pc.signalingState !== 'stable') {
@@ -234,13 +239,30 @@ export class MeshManager {
             await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            dc.send(JSON.stringify({ type: 'ice-restart-answer', sdp: { type: answer.type, sdp: answer.sdp } }));
+            dc.send(JSON.stringify({
+              type: 'ice-restart-answer',
+              sdp: { type: answer.type, sdp: answer.sdp },
+            }));
+
+            // Bekleyen adayları uygula
+            if (msg.candidates && msg.candidates.length > 0) {
+              for (const c of msg.candidates) {
+                try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
+              }
+            }
             break;
           }
 
+          // ⭐ ICE Restart Cevabı
           case 'ice-restart-answer': {
-            console.log(`[DataChannel] ICE Restart cevabı alındı: ${peerId}`);
-            await peerEntry.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            console.log(`[DC] ICE Restart cevabı alındı: ${peerId}`);
+            const pc = peerEntry.pc;
+            await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            if (msg.candidates && msg.candidates.length > 0) {
+              for (const c of msg.candidates) {
+                try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
+              }
+            }
             break;
           }
 
@@ -248,7 +270,7 @@ export class MeshManager {
             const pc = peerEntry.pc;
             if (msg.candidate) {
               if (pc.remoteDescription && pc.remoteDescription.type) {
-                await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch (_) {}
               } else {
                 peerEntry.pendingCandidates.push(msg.candidate);
               }
@@ -256,25 +278,128 @@ export class MeshManager {
             break;
           }
 
-          case 'mic-state': {
+          case 'mic-state':
             peerEntry.isMuted = !!msg.isMuted;
             this.notifyStateChange(peerId, peerEntry.state);
             break;
-          }
 
-          case 'horn-alert': {
+          case 'horn-alert':
             if (this.onHornReceived) this.onHornReceived(peerId, peerEntry.name);
             break;
-          }
+
+          case 'heartbeat':
+            // DC canlı - iyi
+            break;
 
           default: break;
         }
       } catch (err) {
-        console.warn('[DataChannel] Mesaj hatası:', err);
+        console.warn('[DC] Mesaj hatası:', err);
       }
     };
   }
 
+  // ========================================================
+  //  ⭐⭐⭐ ULTRA-HIZLI ICE RESTART (DataChannel üzerinden)
+  //  Ağ değiştiğinde 200ms içinde ICE Restart teklifini
+  //  DataChannel'dan geçirmeye çalışır
+  // ========================================================
+  async _immediateIceRestart(peerId) {
+    const entry = this.peers.get(peerId);
+    if (!entry) return;
+
+    entry.iceRestartAttempts++;
+    const attempt = entry.iceRestartAttempts;
+
+    // 8 denemeden sonra vazgeç
+    if (attempt > 8) {
+      console.log(`[ICE Restart] ❌ ${attempt} deneme sonrası başarısız: ${peerId}`);
+      if (!entry.disconnectTimeout) {
+        entry.disconnectTimeout = setTimeout(() => {
+          peerEntry_checkFinalState(this, peerId, entry);
+        }, 3000);
+      }
+      return;
+    }
+
+    console.log(`[ICE Restart] Deneme #${attempt} - ${peerId}`);
+
+    const pc = entry.pc;
+    const dc = entry.dataChannel;
+    const dcAlive = dc && dc.readyState === 'open';
+
+    // DataChannel veya Firebase üzerinden ICE Restart
+    try {
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      const offerPayload = { type: offer.type, sdp: offer.sdp };
+
+      // Toplanan yeni ICE adaylarını bekle (100ms)
+      const candidates = [];
+      const origHandler = pc.onicecandidate;
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          const cj = e.candidate.toJSON ? e.candidate.toJSON() : {
+            candidate: e.candidate.candidate,
+            sdpMid: e.candidate.sdpMid,
+            sdpMLineIndex: e.candidate.sdpMLineIndex,
+          };
+          candidates.push(cj);
+          // Her yeni aday geldiğinde DC'den gönder
+          if (dcAlive) {
+            try { dc.send(JSON.stringify({ type: 'ice-candidate', candidate: cj })); } catch (_) {}
+          }
+        }
+        // Orijinal handler'ı da çağır (Firebase)
+        if (origHandler) origHandler(e);
+      };
+
+      // DataChannel üzerinden ICE Restart teklifi gönder
+      if (dcAlive) {
+        try {
+          dc.send(JSON.stringify({
+            type: 'ice-restart-offer',
+            sdp: offerPayload,
+            candidates,
+          }));
+          console.log(`[ICE Restart] ✅ Teklif DataChannel üzerinden gönderildi: ${peerId}`);
+        } catch (err) {
+          console.warn(`[ICE Restart] DC gönderme hatası:`, err.message);
+        }
+      }
+
+      // Firebase üzerinden de dene
+      this.sendSignal(peerId, { sdp: offerPayload });
+
+    } catch (err) {
+      console.warn(`[ICE Restart] Teklif oluşturma hatası:`, err.message);
+    }
+
+    // Sonraki denemeyi zamanla (giderek artan aralıkla)
+    const nextDelay = Math.min(500 * attempt, 4000);
+    entry.reconnectTimer = setTimeout(() => {
+      if (entry.state !== 'connected' && entry.iceRestartAttempts <= 8) {
+        this._immediateIceRestart(peerId);
+      }
+    }, nextDelay);
+  }
+
+  // ========================================================
+  //  AĞ DEĞİŞİMİ ALGILANDI - Tüm peerlar için ICE Restart
+  // ========================================================
+  async restartIceForAllPeers() {
+    console.log('[MeshManager] 🌐 Ağ değişimi - tüm peerlar için ICE Restart');
+    for (const [peerId, entry] of this.peers.entries()) {
+      if (entry.state === 'connected' || entry.state === 'reconnecting') {
+        entry.iceRestartAttempts = 0; // Sıfırla, yeniden dene
+        this._immediateIceRestart(peerId);
+      }
+    }
+  }
+
+  // ========================================================
+  //  STANDART BAĞLANTI
+  // ========================================================
   async connectToPeer(peerId, name) {
     console.log(`[MeshManager] Bağlanılıyor -> ${name} (${peerId})`);
     const pc = this.createPeerConnection(peerId, name);
@@ -298,33 +423,24 @@ export class MeshManager {
       this.createPeerConnection(fromPeerId, name);
       entry = this.peers.get(fromPeerId);
     }
-
-    if (name && entry) {
-      entry.name = name;
-      registerPeerName(fromPeerId, name);
-    }
+    if (name && entry) { entry.name = name; registerPeerName(fromPeerId, name); }
 
     const pc = entry.pc;
-
     try {
       if (data.sdp) {
         const isOffer = data.sdp.type === 'offer';
         const collision = isOffer && (entry.makingOffer || pc.signalingState !== 'stable');
-
         if (collision && !entry.isPolite) return;
         if (collision && entry.isPolite) {
           try { await pc.setLocalDescription({ type: 'rollback' }); } catch (_) {}
         }
-
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-
         if (entry.pendingCandidates.length > 0) {
           for (const c of entry.pendingCandidates) {
             try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
           }
           entry.pendingCandidates = [];
         }
-
         if (isOffer) {
           const answer = await pc.createAnswer({ offerToReceiveAudio: true });
           await pc.setLocalDescription(answer);
@@ -342,90 +458,15 @@ export class MeshManager {
     }
   }
 
-  // ==============================
-  // HOTSPOT GEÇİŞ ICE RESTART
-  // ==============================
-  async restartIceForAllPeers(attemptNumber = 0) {
-    console.log(`[MeshManager] ICE Restart deneme #${attemptNumber + 1}`);
-
-    let anySuccess = false;
-    let anyDataChannelAlive = false;
-
-    for (const [peerId, entry] of this.peers.entries()) {
-      const dc = entry.dataChannel;
-      const dcAlive = dc && dc.readyState === 'open';
-
-      if (dcAlive) {
-        anyDataChannelAlive = true;
-        try {
-          // Sadece Polite peer teklif gönderir (çift teklif çakışmasını önler)
-          if (entry.isPolite) {
-            const pc = entry.pc;
-            const offer = await pc.createOffer({ iceRestart: true });
-            await pc.setLocalDescription(offer);
-            const offerPayload = { type: offer.type, sdp: offer.sdp };
-
-            dc.send(JSON.stringify({ type: 'ice-restart-offer', sdp: offerPayload }));
-            console.log(`[MeshManager] ICE Restart teklifi DataChannel üzerinden gönderildi -> ${peerId}`);
-            anySuccess = true;
-          }
-        } catch (err) {
-          console.warn(`[MeshManager] ICE Restart hatası (${peerId}):`, err.message);
-        }
-      }
-
-      // DataChannel ölmüşse Firebase üzerinden de dene
-      try {
-        const pc = entry.pc;
-        if (entry.isPolite && !dcAlive) {
-          const offer = await pc.createOffer({ iceRestart: true });
-          await pc.setLocalDescription(offer);
-          this.sendSignal(peerId, { sdp: { type: offer.type, sdp: offer.sdp } });
-        }
-      } catch (_) {}
-    }
-
-    // DataChannel zaten ölüyse ve son denemeyse -> kullanıcıya bildir
-    if (!anyDataChannelAlive && attemptNumber >= 2) {
-      this._startReconnectionFailureCountdown();
-    }
-
-    return anySuccess;
-  }
-
-  _startReconnectionFailureCountdown() {
-    if (this._reconnectionFailureTimer) return;
-
-    // Tüm peerlar hala kopuksa 8sn sonra onReconnectionFailed callback'i çağır
-    this._reconnectionFailureTimer = setTimeout(() => {
-      let allDisconnected = true;
-      for (const [, entry] of this.peers.entries()) {
-        if (entry.state === 'connected') {
-          allDisconnected = false;
-          break;
-        }
-      }
-
-      if (allDisconnected && this.peers.size > 0) {
-        console.log('[MeshManager] ❌ Otomatik ICE Restart başarısız. Çevrimdışı QR eşleşme öneriliyor.');
-        this.onReconnectionFailed();
-      }
-      this._reconnectionFailureTimer = null;
-    }, 8000);
-  }
-
-  // %100 Çevrimdışı QR Eşleşme Metodları
+  // ========================================================
+  //  ÇEVRIMDIŞI QR BAĞLANTI (son çare fallback)
+  // ========================================================
   async createOfflineOffer(peerId = 'offline_peer', name = 'Lider') {
     const pc = this.createPeerConnection(peerId, name, true);
     const candidates = [];
-
     return new Promise(async (resolve, reject) => {
       let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve({ sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }, candidates });
-      };
+      const finish = () => { if (done) return; done = true; resolve({ sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }, candidates }); };
       pc.onicecandidate = (e) => { if (e.candidate) candidates.push(e.candidate.candidate); else finish(); };
       try {
         const offer = await pc.createOffer({ offerToReceiveAudio: true });
@@ -461,6 +502,9 @@ export class MeshManager {
     }
   }
 
+  // ========================================================
+  //  SES & KONTROL
+  // ========================================================
   setMute(isMuted) {
     this.isMuted = isMuted;
     if (this.rawLocalStream) this.rawLocalStream.getAudioTracks().forEach((t) => { t.enabled = !isMuted; });
@@ -493,15 +537,17 @@ export class MeshManager {
     }
   }
 
+  // ========================================================
+  //  İSTATİSTİKLER
+  // ========================================================
   startStatsMonitoring() {
     if (this.statsInterval) clearInterval(this.statsInterval);
     this.statsInterval = setInterval(async () => {
-      let totalRtt = 0;
-      let rttCount = 0;
-      let connectedCount = 0;
-
+      let totalRtt = 0, rttCount = 0, connectedCount = 0;
       for (const [peerId, entry] of this.peers.entries()) {
-        if (entry.pc && (entry.pc.connectionState === 'connected' || entry.pc.iceConnectionState === 'connected' || entry.pc.iceConnectionState === 'completed')) {
+        const st = entry.pc.connectionState;
+        const ice = entry.pc.iceConnectionState;
+        if (st === 'connected' || ice === 'connected' || ice === 'completed') {
           connectedCount++;
           try {
             const stats = await entry.pc.getStats();
@@ -510,8 +556,7 @@ export class MeshManager {
               if (r.type === 'transport' && r.selectedCandidatePairId) selectedPair = stats.get(r.selectedCandidatePairId);
               else if (r.type === 'candidate-pair' && r.selected) selectedPair = r;
             });
-            let rtt = 12;
-            let isLocal = true;
+            let rtt = 12, isLocal = true;
             if (selectedPair) {
               rtt = Math.round((selectedPair.currentRoundTripTime || 0) * 1000) || 12;
               const lc = stats.get(selectedPair.localCandidateId);
@@ -523,13 +568,8 @@ export class MeshManager {
           } catch (_) {}
         }
       }
-
       if (this.onStatsUpdate) {
-        this.onStatsUpdate({
-          isHotspotMode: connectedCount > 0,
-          avgRtt: rttCount > 0 ? Math.round(totalRtt / rttCount) : 15,
-          activePeersCount: connectedCount,
-        });
+        this.onStatsUpdate({ isHotspotMode: connectedCount > 0, avgRtt: rttCount > 0 ? Math.round(totalRtt / rttCount) : 15, activePeersCount: connectedCount });
       }
     }, 2000);
   }
@@ -538,6 +578,7 @@ export class MeshManager {
     const entry = this.peers.get(peerId);
     if (entry) {
       if (entry.disconnectTimeout) clearTimeout(entry.disconnectTimeout);
+      if (entry.reconnectTimer) clearTimeout(entry.reconnectTimer);
       if (entry.levelMeter) entry.levelMeter.destroy();
       try { entry.pc.close(); } catch (_) {}
       if (entry.audioEl) entry.audioEl.srcObject = null;
@@ -548,12 +589,26 @@ export class MeshManager {
 
   destroy() {
     if (this.statsInterval) clearInterval(this.statsInterval);
-    if (this._reconnectionFailureTimer) clearTimeout(this._reconnectionFailureTimer);
+    if (this._heartbeatInterval) clearInterval(this._heartbeatInterval);
     this.peers.forEach((_, pid) => this.removePeer(pid));
     this.peers.clear();
     if (this.localLevelMeter) { this.localLevelMeter.destroy(); this.localLevelMeter = null; }
     if (this.dspFilter) { this.dspFilter.destroy(); this.dspFilter = null; }
     if (this.rawLocalStream) { this.rawLocalStream.getTracks().forEach((t) => t.stop()); this.rawLocalStream = null; }
     this.localStream = null;
+  }
+}
+
+// Yardımcı: Son durum kontrolü
+function peerEntry_checkFinalState(manager, peerId, entry) {
+  const pc = entry.pc;
+  if (
+    pc.connectionState !== 'connected' &&
+    pc.iceConnectionState !== 'connected' &&
+    pc.iceConnectionState !== 'completed'
+  ) {
+    entry.state = 'failed';
+    manager.notifyStateChange(peerId, 'failed');
+    manager.onPeerDisconnect(peerId);
   }
 }
