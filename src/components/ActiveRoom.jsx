@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import ParticipantCard from './ParticipantCard.jsx';
 import ConnectionQualityBadge from './ConnectionQualityBadge.jsx';
 import HotspotGuideModal from './HotspotGuideModal.jsx';
+import OfflineQRHandshakeModal from './OfflineQRHandshakeModal.jsx';
 import QRCodeDisplay from './QRCodeDisplay.jsx';
 import {
   Mic,
@@ -19,6 +20,7 @@ import {
   Maximize,
   Minimize,
   AlertTriangle,
+  WifiOff,
 } from 'lucide-react';
 
 export default function ActiveRoom({
@@ -36,9 +38,12 @@ export default function ActiveRoom({
   isWakeLockActive,
   isOnline,
   toastMessage,
+  meshManager,
+  onOfflineHandshakeSuccess,
 }) {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [isOfflineQRModalOpen, setIsOfflineQRModalOpen] = useState(false);
   const [isLeaveConfirmOpen, setIsLeaveConfirmOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hornCooldown, setHornCooldown] = useState(false);
@@ -146,20 +151,18 @@ export default function ActiveRoom({
         </div>
       )}
 
-      {/* Hotspot İnternetsiz Mod Hızlı Geçiş Şeridi */}
-      {!stats?.isHotspotMode && (
-        <div className="hotspot-banner-strip" onClick={() => setIsGuideOpen(true)}>
-          <div className="hotspot-banner-content">
-            <Zap size={16} className="text-neon animate-pulse" />
-            <span>
-              <strong>İnternetsiz Mod:</strong> Hotspot açarak hücresel şebeke olmadan kesintisiz konuşun.
-            </span>
-          </div>
-          <button type="button" className="btn-banner-guide">
-            Nasıl Yapılır?
-          </button>
+      {/* 0 İnternet Çevrimdışı Hotspot Şeridi */}
+      <div className="hotspot-banner-strip" onClick={() => setIsOfflineQRModalOpen(true)}>
+        <div className="hotspot-banner-content">
+          <WifiOff size={16} className="text-orange animate-pulse" />
+          <span>
+            <strong>0 İnternet Hotspot Modu:</strong> İnternet yoksa doğrudan QR ile eşleşip konuşun.
+          </span>
         </div>
-      )}
+        <button type="button" className="btn-banner-guide">
+          Çevrimdışı Eşleş
+        </button>
+      </div>
 
       {/* Sürücüler Tablosu */}
       <main className="cockpit-main-area">
@@ -183,7 +186,7 @@ export default function ActiveRoom({
               isSpeaking={localIsSpeaking}
               volumeLevel={localVolume}
               connectionState="connected"
-              stats={{ isLocal: stats?.isHotspotMode, rtt: stats?.avgRtt || 10 }}
+              stats={{ isLocal: true, rtt: stats?.avgRtt || 10 }}
             />
 
             {/* Diğer Sürücüler */}
@@ -198,7 +201,7 @@ export default function ActiveRoom({
                   isSpeaking={peerVol.isSpeaking}
                   volumeLevel={peerVol.level}
                   connectionState={peer.state || 'connected'}
-                  stats={peer.stats}
+                  stats={peer.stats || { isLocal: true, rtt: 12 }}
                 />
               );
             })}
@@ -232,18 +235,18 @@ export default function ActiveRoom({
             <span className="control-label">İKAZ BİP</span>
           </button>
 
-          {/* Hotspot Rehberi Butonu */}
+          {/* 0 İnternet Çevrimdışı QR Eşleşme */}
           <button
             type="button"
             className="btn-glove-action btn-hotspot"
-            onClick={() => setIsGuideOpen(true)}
-            title="İnternetsiz Hotspot Rehberi"
+            onClick={() => setIsOfflineQRModalOpen(true)}
+            title="0 İnternet Çevrimdışı QR Eşleşme"
           >
-            <Radio size={24} />
-            <span className="control-label">HOTSPOT</span>
+            <WifiOff size={24} />
+            <span className="control-label">0 NET QR</span>
           </button>
 
-          {/* Odadan Ayrıl Butonu (Güvenlik onay modalı ile) */}
+          {/* Odadan Ayrıl Butonu */}
           <button
             type="button"
             className="btn-glove-action btn-leave"
@@ -258,6 +261,17 @@ export default function ActiveRoom({
 
       {/* Hotspot Geçiş Modalı */}
       <HotspotGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
+
+      {/* 0 İnternet Doğrudan QR Eşleşme Modalı */}
+      <OfflineQRHandshakeModal
+        isOpen={isOfflineQRModalOpen}
+        onClose={() => setIsOfflineQRModalOpen(false)}
+        meshManager={meshManager}
+        selfName={selfName}
+        onHandshakeSuccess={(partnerName) => {
+          if (onOfflineHandshakeSuccess) onOfflineHandshakeSuccess(partnerName);
+        }}
+      />
 
       {/* Odadan Ayrılma Güvenlik Modalı */}
       {isLeaveConfirmOpen && (

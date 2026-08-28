@@ -1,0 +1,18 @@
+{
+  "name": "RideTalk — Motosiklet İnterkomu",
+  "short_name": "RideTalk",
+  "description": "0 İnternet Hotspot ve Full Mesh Motosiklet Telsizi",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080c14",
+  "theme_color": "#080c14",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

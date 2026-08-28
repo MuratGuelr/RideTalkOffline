@@ -1,6 +1,8 @@
 // WebRTC Full-Mesh Ses Yöneticisi (MeshManager)
-// W3C Polite Peer standardı ile donatılmıştır: Hotspot ve ağ geçişlerinde
-// çift teklif (glare) kilitlenmelerini otomatik çözer ve 0 internet yerel bağlantıyı kurar.
+// 1. Standart Sinyal Motoru (Firebase & WebSocket)
+// 2. %100 Çevrimdışı Doğrudan QR Handshake (Sıfır Sunucu / Sıfır İnternet Hotspot Mesh)
+// 3. W3C Polite Peer Çakışma Yönetimi
+// 4. Motosiklet DSP Rüzgar & Gürültü Filtresi
 
 import { AudioLevelMeter } from './audioMeter.js';
 import { registerPeerName, unregisterPeerName } from './announcer.js';
@@ -24,7 +26,6 @@ export class MeshManager {
     this.onStatsUpdate = options.onStatsUpdate || (() => {});
     this.myPeerId = options.myPeerId || '';
 
-    // peerId -> { pc, dataChannel, audioEl, stream, levelMeter, name, state, disconnectTimeout, isMuted, stats, pendingCandidates, makingOffer, isPolite }
     this.peers = new Map();
     this.rawLocalStream = null;
     this.localStream = null;
@@ -79,7 +80,7 @@ export class MeshManager {
 
     const pc = new RTCPeerConnection({
       iceServers: ICE_SERVERS,
-      iceCandidatePoolSize: 0, // Yerel host adaylarını gecikmesiz anında üret
+      iceCandidatePoolSize: 0,
     });
 
     if (this.localStream) {
@@ -92,8 +93,6 @@ export class MeshManager {
     audioEl.autoplay = true;
     audioEl.playsInline = true;
 
-    // Polite Peer: İki cihaz arasında ID kıyaslamasıyla kimin kibar (polite) olacağı belirlenir.
-    // Böylece ağ değiştiğinde iki taraf da aynı anda teklif gönderirse kilitlenme yaşanmaz!
     const isPolite = this.myPeerId ? this.myPeerId > peerId : true;
 
     const peerEntry = {
@@ -129,7 +128,6 @@ export class MeshManager {
       });
     };
 
-    // ICE Candidate takası
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         const candidatePayload = event.candidate.toJSON
@@ -301,7 +299,6 @@ export class MeshManager {
     }
   }
 
-  // W3C Polite Peer Sinyal İşleme (Glare & Çakışma Çözücü)
   async handleSignal(fromPeerId, data, name) {
     let entry = this.peers.get(fromPeerId);
     if (!entry) {
@@ -321,13 +318,11 @@ export class MeshManager {
         const isOffer = data.sdp.type === 'offer';
         const offerCollision = isOffer && (entry.makingOffer || pc.signalingState !== 'stable');
 
-        // Impolite peer ise ve çakışma varsa gelen teklifi yoksay (kendi teklifini koru)
         if (offerCollision && !entry.isPolite) {
           console.warn(`[MeshManager] Impolite Peer (${fromPeerId}): Teklif çakışması algılandı, yerel teklif korunuyor.`);
           return;
         }
 
-        // Polite peer ise ve çakışma varsa yerel teklifi geri al (rollback yap ve karşıyı kabul et)
         if (offerCollision && entry.isPolite) {
           console.log(`[MeshManager] Polite Peer (${fromPeerId}): Teklif çakışması çözülüyor (Rollback).`);
           try {
@@ -367,13 +362,109 @@ export class MeshManager {
     }
   }
 
+  // =========================================================================
+  // %100 ÇEVRİMDIŞI DOĞRUDAN QR WEBRTC EŞLEŞTİRİCİSİ (0 İNTERNET HOTSPOT)
+  // =========================================================================
+
+  // 1. Lider için Çevrimdışı Teklif (Offer) Üret
+  async createOfflineOffer(peerId = 'offline_peer', name = 'Lider') {
+    const pc = this.createPeerConnection(peerId, name);
+    const candidates = [];
+
+    return new Promise(async (resolve, reject) => {
+      let isResolved = false;
+
+      const finish = () => {
+        if (isResolved) return;
+        isResolved = true;
+        resolve({
+          sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp },
+          candidates,
+        });
+      };
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          candidates.push(e.candidate.candidate);
+        } else {
+          finish();
+        }
+      };
+
+      try {
+        const offer = await pc.createOffer({ offerToReceiveAudio: true });
+        await pc.setLocalDescription(offer);
+        // Yerel Host adaylarının toplanması için 650ms bekle
+        setTimeout(finish, 650);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  // 2. Katılımcı için Liderin Teklifini Kabul Et & Cevap (Answer) Üret
+  async acceptOfflineOfferAndCreateAnswer(peerId = 'offline_peer', offerSdp, offerCandidates = [], name = 'Sürücü') {
+    const pc = this.createPeerConnection(peerId, name);
+    await pc.setRemoteDescription(new RTCSessionDescription(offerSdp));
+
+    for (const candStr of offerCandidates) {
+      if (candStr) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate({ candidate: candStr, sdpMid: '0', sdpMLineIndex: 0 }));
+        } catch (_) {}
+      }
+    }
+
+    const answer = await pc.createAnswer({ offerToReceiveAudio: true });
+    await pc.setLocalDescription(answer);
+
+    const candidates = [];
+    return new Promise((resolve) => {
+      let isResolved = false;
+      const finish = () => {
+        if (isResolved) return;
+        isResolved = true;
+        resolve({
+          sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp },
+          candidates,
+        });
+      };
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          candidates.push(e.candidate.candidate);
+        } else {
+          finish();
+        }
+      };
+
+      setTimeout(finish, 650);
+    });
+  }
+
+  // 3. Lider için Katılımcının Cevabını (Answer) Kabul Et ve Bağlantıyı Başlat
+  async acceptOfflineAnswer(peerId = 'offline_peer', answerSdp, answerCandidates = []) {
+    let entry = this.peers.get(peerId);
+    if (!entry) return;
+    const pc = entry.pc;
+    await pc.setRemoteDescription(new RTCSessionDescription(answerSdp));
+
+    for (const candStr of answerCandidates) {
+      if (candStr) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate({ candidate: candStr, sdpMid: '0', sdpMLineIndex: 0 }));
+        } catch (_) {}
+      }
+    }
+    console.log('[MeshManager] Çevrimdışı QR eşleşmesi tamamlandı, yerel ses akışı başlıyor! ✅');
+  }
+
   async restartIceForAllPeers() {
     console.log('[MeshManager] Ağ değişimi -> Yerel ICE Restart başlatılıyor...');
     for (const [peerId, entry] of this.peers.entries()) {
       try {
         const pc = entry.pc;
         if (entry.isPolite) {
-          // Polite peer teklif oluşturur
           const offer = await pc.createOffer({ iceRestart: true });
           await pc.setLocalDescription(offer);
           const offerPayload = { type: offer.type, sdp: offer.sdp };
@@ -482,7 +573,6 @@ export class MeshManager {
 
               rtt = Math.round((selectedPair.currentRoundTripTime || 0) * 1000) || 12;
 
-              // Eğer aday tipi host (yerel IP) ise bu yerel Hotspot / Wi-Fi bağlantısıdır
               isLocal =
                 !localCandidate ||
                 localCandidate.candidateType === 'host' ||
@@ -510,7 +600,7 @@ export class MeshManager {
 
       if (this.onStatsUpdate) {
         this.onStatsUpdate({
-          isHotspotMode: connectedCount > 0, // Bağlı kullanıcılar varsa doğrudan yerel/p2p modda kabul et
+          isHotspotMode: connectedCount > 0,
           avgRtt: rttCount > 0 ? Math.round(totalRtt / rttCount) : 15,
           activePeersCount: connectedCount,
         });

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import RoomCreate from './components/RoomCreate.jsx';
 import RoomJoin from './components/RoomJoin.jsx';
 import ActiveRoom from './components/ActiveRoom.jsx';
+import OfflineQRHandshakeModal from './components/OfflineQRHandshakeModal.jsx';
 import ServerSettingsModal from './components/ServerSettingsModal.jsx';
 import { SignalingClient } from './lib/signaling.js';
 import { FirebaseSignalingClient, isFirebaseConfigured } from './lib/firebaseSignaling.js';
@@ -20,7 +21,7 @@ import {
 } from './lib/announcer.js';
 import { keepScreenAwake, releaseScreenAwake, onWakeLockStatusChange } from './lib/wakeLock.js';
 import { watchNetworkChanges } from './lib/networkWatcher.js';
-import { Radio, Users, PlusCircle, LogIn, Shield, WifiOff, Volume2, Settings } from 'lucide-react';
+import { Radio, PlusCircle, LogIn, Shield, WifiOff, Volume2, Settings, QrCode } from 'lucide-react';
 import './App.css';
 
 export default function App() {
@@ -30,12 +31,13 @@ export default function App() {
   const [error, setError] = useState(null);
   const [initialRoomCode, setInitialRoomCode] = useState('');
   const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
+  const [isLobbyOfflineQRModalOpen, setIsLobbyOfflineQRModalOpen] = useState(false);
 
   // Aktif İnterkom Durumları
-  const [peers, setPeers] = useState({}); // peerId -> { name, state, isMuted, stats }
+  const [peers, setPeers] = useState({});
   const [localVolume, setLocalVolume] = useState(0);
   const [localIsSpeaking, setLocalIsSpeaking] = useState(false);
-  const [peerVolumes, setPeerVolumes] = useState({}); // peerId -> { level, isSpeaking }
+  const [peerVolumes, setPeerVolumes] = useState({});
   const [isMuted, setIsMuted] = useState(false);
   const [isWakeLockActive, setIsWakeLockActive] = useState(false);
   const [stats, setStats] = useState({ isHotspotMode: true, avgRtt: 12 });
@@ -150,7 +152,6 @@ export default function App() {
 
         await keepScreenAwake();
 
-        // Mesh Yöneticisi
         const mesh = new MeshManager({
           myPeerId: currentRoomData?.peerId || '',
           sendSignal: (targetPeerId, data) => {
@@ -200,7 +201,6 @@ export default function App() {
         await mesh.init();
 
         if (existingPeers && existingPeers.length > 0) {
-          console.log(`[App] ${existingPeers.length} mevcut katılımcıya WebRTC teklifi gönderiliyor...`);
           for (const p of existingPeers) {
             await mesh.connectToPeer(p.id, p.name);
           }
@@ -209,7 +209,7 @@ export default function App() {
         const unwatchNetwork = watchNetworkChanges(() => {
           if (meshRef.current) {
             meshRef.current.restartIceForAllPeers();
-            showToast('Hotspot / Ağ değişimi algılandı, yerel bağlantı tazelendi');
+            showToast('Hotspot / Ağ değişimi algılandı');
           }
         });
 
@@ -225,7 +225,6 @@ export default function App() {
   const bindSignalingEvents = useCallback(
     (signaling) => {
       signaling.on('peer-joined', async (msg) => {
-        console.log('[App] Yeni sürücü odaya katıldı:', msg.name, `(${msg.peerId})`);
         announceJoin(msg.peerId, msg.name);
         showToast(`${msg.name} odaya katıldı`);
 
@@ -247,7 +246,6 @@ export default function App() {
       });
 
       signaling.on('peer-left', (msg) => {
-        console.log('[App] Sürücü ayrıldı:', msg);
         playSomeoneLeftSound();
         announceDisconnect(msg.peerId);
         showToast(`${msg.name || 'Sürücü'} odadan ayrıldı`);
@@ -271,7 +269,69 @@ export default function App() {
     [showToast]
   );
 
-  // Oda Oluştur (Lider)
+  // 100% ÇEVRİMDIŞI DOĞRUDAN BAŞLATMA (0 İNTERNET)
+  const handleStartDirectOffline = async () => {
+    try {
+      ensureAudioUnlocked();
+      const offlineRoomData = {
+        roomCode: 'OFFLINE',
+        peerId: 'peer_' + Math.random().toString(36).substring(2, 9),
+        name: localStorage.getItem('ridetalk_name') || 'Sürücü',
+      };
+      setRoomData(offlineRoomData);
+
+      const mesh = new MeshManager({
+        myPeerId: offlineRoomData.peerId,
+        onPeerStateChange: (peerId, info) => {
+          setPeers((prev) => ({
+            ...prev,
+            [peerId]: {
+              name: info.name,
+              state: info.state,
+              isMuted: info.isMuted,
+              stats: info.stats,
+            },
+          }));
+        },
+        onPeerVolumeChange: (peerId, level, isSpeaking) => {
+          setPeerVolumes((prev) => ({
+            ...prev,
+            [peerId]: { level, isSpeaking },
+          }));
+        },
+        onLocalVolumeChange: (level, isSpeaking) => {
+          setLocalVolume(level);
+          setLocalIsSpeaking(isSpeaking);
+        },
+        onPeerDisconnect: (peerId) => {
+          playSomeoneLeftSound();
+          announceDisconnect(peerId);
+        },
+        onPeerReconnect: (peerId) => {
+          announceReconnect(peerId);
+        },
+        onHornReceived: (peerId, senderName) => {
+          playAlertTone('horn');
+          showToast(`⚠️ ${senderName || 'Sürücü'} ikaz tonu gönderdi!`);
+        },
+        onStatsUpdate: (updatedStats) => {
+          setStats(updatedStats);
+        },
+      });
+
+      meshRef.current = mesh;
+      await mesh.init();
+      await keepScreenAwake();
+
+      setView('active');
+      setIsLobbyOfflineQRModalOpen(true);
+      speakText('Çevrimdışı interkom aktif. QR ile eşleşin.');
+    } catch (err) {
+      alert(`Mikrofon hatası: ${err.message}`);
+    }
+  };
+
+  // Oda Oluştur (Lider - Standart)
   const handleStartRoom = async (name) => {
     try {
       setError(null);
@@ -307,7 +367,7 @@ export default function App() {
     }
   };
 
-  // Odaya Katıl (Katılımcı)
+  // Odaya Katıl (Katılımcı - Standart)
   const handleJoinRoom = async (code, name) => {
     try {
       setError(null);
@@ -355,7 +415,6 @@ export default function App() {
     }
   };
 
-  // Mikrofon Aç / Kapat
   const handleToggleMute = () => {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
@@ -370,7 +429,6 @@ export default function App() {
     showToast(nextMuted ? 'Mikrofon Kapatıldı' : 'Mikrofon Açık');
   };
 
-  // İkaz Tonu Gönder
   const handleSendHorn = () => {
     if (meshRef.current) {
       meshRef.current.sendHornAlert();
@@ -379,7 +437,6 @@ export default function App() {
     }
   };
 
-  // Odadan Ayrıl
   const handleLeaveRoomDirect = () => {
     if (meshRef.current) {
       meshRef.current.destroy();
@@ -414,21 +471,21 @@ export default function App() {
               <div className="brand-pulse-ring"></div>
             </div>
             <h1 className="brand-title">RideTalk</h1>
-            <p className="brand-tagline">Motosiklet İçin Tam Mesh & İnternetsiz Hotspot İnterkomu</p>
+            <p className="brand-tagline">Motosiklet İçin Tam Mesh & 0 İnternet Hotspot İnterkomu</p>
           </header>
 
           <div className="feature-pill-row">
             <div className="feat-pill">
               <Shield size={14} className="text-emerald" />
-              <span>Full Mesh WebRTC</span>
+              <span>PWA 100% Çevrimdışı</span>
             </div>
             <div className="feat-pill">
               <WifiOff size={14} className="text-orange" />
-              <span>Hotspot ile 0 İnternet</span>
+              <span>0 İnternet QR Mesh</span>
             </div>
             <div className="feat-pill">
               <Volume2 size={14} className="text-cyan" />
-              <span>TTS Kopma Anonsu</span>
+              <span>DSP Gürültü Filtresi</span>
             </div>
           </div>
 
@@ -447,7 +504,7 @@ export default function App() {
               </div>
               <div className="card-action-text">
                 <h3>Oda Oluştur</h3>
-                <p>Grup lideri olarak yeni interkom başlatın ve QR kod üretin</p>
+                <p>İnternet üzerinden yeni telsiz odası başlatın ve QR üretin</p>
               </div>
             </button>
 
@@ -465,6 +522,26 @@ export default function App() {
               <div className="card-action-text">
                 <h3>Odaya Katıl</h3>
                 <p>6 haneli kod girerek veya kamerayla QR okutarak katılın</p>
+              </div>
+            </button>
+
+            {/* 0 İNTERNET DOĞRUDAN HOTSPOT KARTI */}
+            <button
+              type="button"
+              className="lobby-action-card card-offline-direct"
+              style={{
+                gridColumn: '1 / -1',
+                background: 'linear-gradient(135deg, rgba(255, 107, 0, 0.15) 0%, rgba(255, 23, 68, 0.1) 100%)',
+                border: '1px solid rgba(255, 107, 0, 0.4)',
+              }}
+              onClick={handleStartDirectOffline}
+            >
+              <div className="card-action-icon" style={{ color: '#ff6b00' }}>
+                <QrCode size={32} />
+              </div>
+              <div className="card-action-text">
+                <h3 style={{ color: '#ff6b00' }}>0 İnternet — Doğrudan Hotspot Eşleşmesi</h3>
+                <p>İnternet hiç çekmiyorsa Hotspot açıp doğrudan QR okutarak bağlanın</p>
               </div>
             </button>
           </div>
@@ -537,6 +614,42 @@ export default function App() {
           isWakeLockActive={isWakeLockActive}
           isOnline={isOnline}
           toastMessage={toastMessage}
+          meshManager={meshRef.current}
+          onOfflineHandshakeSuccess={(partnerName) => {
+            showToast(`${partnerName} ile 0 internet yerel ses bağlandı!`);
+            setPeers((prev) => ({
+              ...prev,
+              offline_peer: {
+                name: partnerName || 'Sürücü',
+                state: 'connected',
+                isMuted: false,
+                stats: { isLocal: true, rtt: 10 },
+              },
+            }));
+          }}
+        />
+      )}
+
+      {/* Lobi Üzerinden Açılan Doğrudan Çevrimdışı QR Modalı */}
+      {isLobbyOfflineQRModalOpen && (
+        <OfflineQRHandshakeModal
+          isOpen={isLobbyOfflineQRModalOpen}
+          onClose={() => setIsLobbyOfflineQRModalOpen(false)}
+          meshManager={meshRef.current}
+          selfName={roomData?.name || 'Sürücü'}
+          onHandshakeSuccess={(partnerName) => {
+            setIsLobbyOfflineQRModalOpen(false);
+            showToast(`${partnerName} ile 0 internet yerel ses bağlandı!`);
+            setPeers((prev) => ({
+              ...prev,
+              offline_peer: {
+                name: partnerName || 'Sürücü',
+                state: 'connected',
+                isMuted: false,
+                stats: { isLocal: true, rtt: 10 },
+              },
+            }));
+          }}
         />
       )}
     </div>

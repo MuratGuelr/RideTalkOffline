@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import jsQR from 'jsqr';
-import { X, Camera, AlertCircle, RefreshCw, SwitchCamera } from 'lucide-react';
+import { X, Camera, AlertCircle, RefreshCw, SwitchCamera, ScanText } from 'lucide-react';
 
 export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
   const videoRef = useRef(null);
@@ -10,11 +10,12 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
   const [selectedCameraId, setSelectedCameraId] = useState(
     localStorage.getItem('ridetalk_preferred_camera') || ''
   );
+  const [detectedText, setDetectedText] = useState('');
   const animationFrameRef = useRef(null);
   const streamRef = useRef(null);
   const isScanningRef = useRef(true);
 
-  // Mevcut video giriş cihazlarını (kameraları) listele
+  // Kameraları listele
   const loadCameras = useCallback(async () => {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -23,7 +24,6 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
 
       setCameras(videoDevices);
 
-      // Eğer henüz seçili kamera yoksa veya geçerli değilse, arka kamerayı önceliklendir
       if (videoDevices.length > 0) {
         const hasCurrent = videoDevices.some((d) => d.deviceId === selectedCameraId);
         if (!hasCurrent) {
@@ -40,7 +40,7 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
         }
       }
     } catch (err) {
-      console.warn('[QRScanner] Kamera listesi alınamadı:', err);
+      console.warn('[Scanner] Kamera listesi hatası:', err);
     }
   }, [selectedCameraId]);
 
@@ -55,6 +55,77 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
       streamRef.current = null;
     }
   }, []);
+
+  const scanFrame = useCallback(() => {
+    if (!isScanningRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (video && canvas && video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.height = video.videoHeight;
+      canvas.width = video.videoWidth;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // 1. YÖNTEM: Tarayıcı Destekliyorsa Doğrudan OCR Metin Okuma (TextDetector API)
+      if ('TextDetector' in window) {
+        try {
+          const textDetector = new window.TextDetector();
+          textDetector
+            .detect(canvas)
+            .then((detectedTexts) => {
+              for (const item of detectedTexts) {
+                const raw = item.rawValue ? item.rawValue.toUpperCase().trim() : '';
+                // 4-6 Haneli oda kodu veya "ODA KODU: ABC123" gibi metinleri yakala
+                const match = raw.match(/\b([A-Z0-9]{4,6})\b/);
+                if (match && match[1]) {
+                  const code = match[1];
+                  setDetectedText(code);
+                  stopCamera();
+                  onScanSuccess(code);
+                  onClose();
+                  return;
+                }
+              }
+            })
+            .catch(() => {});
+        } catch (_) {}
+      }
+
+      // 2. YÖNTEM: Standart QR Kod Okuyucu Fallback
+      try {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'dontInvert',
+        });
+
+        if (code && code.data) {
+          let foundCode = code.data.trim();
+          if (foundCode.includes('room=')) {
+            const urlParams = new URLSearchParams(foundCode.split('?')[1]);
+            foundCode = urlParams.get('room') || foundCode;
+          } else if (foundCode.length > 6 && !foundCode.startsWith('{')) {
+            const parts = foundCode.split('/');
+            foundCode = parts[parts.length - 1];
+          }
+
+          if (!foundCode.startsWith('{')) {
+            foundCode = foundCode.slice(0, 6).toUpperCase();
+            if (foundCode.length >= 4) {
+              setDetectedText(foundCode);
+              stopCamera();
+              onScanSuccess(foundCode);
+              onClose();
+              return;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    animationFrameRef.current = requestAnimationFrame(scanFrame);
+  }, [onClose, onScanSuccess, stopCamera]);
 
   const startCamera = useCallback(
     async (deviceIdToUse) => {
@@ -78,61 +149,16 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
           videoRef.current.srcObject = stream;
           videoRef.current.setAttribute('playsinline', 'true');
           await videoRef.current.play();
-
-          // Kameraları yeniden listele (izin verildikten sonra etiketler okunabilir hale gelir)
           await loadCameras();
-
-          // QR okuma döngüsünü başlat
-          scanQRCode();
+          scanFrame();
         }
       } catch (err) {
-        console.error('[QRScanner] Kamera başlatılamadı:', err);
-        setError('Kameraya erişilemedi. Lütfen izinleri kontrol edin veya listeden başka bir kamera seçin.');
+        console.error('[Scanner] Kamera hatası:', err);
+        setError('Kameraya erişilemedi. Kodu elle girebilirsiniz.');
       }
     },
-    [loadCameras, stopCamera]
+    [loadCameras, scanFrame, stopCamera]
   );
-
-  const scanQRCode = () => {
-    if (!isScanningRef.current) return;
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-
-    if (video && canvas && video.readyState === video.HAVE_ENOUGH_DATA) {
-      canvas.height = video.videoHeight;
-      canvas.width = video.videoWidth;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: 'dontInvert',
-      });
-
-      if (code && code.data) {
-        let foundCode = code.data.trim();
-        if (foundCode.includes('room=')) {
-          const urlParams = new URLSearchParams(foundCode.split('?')[1]);
-          foundCode = urlParams.get('room') || foundCode;
-        } else if (foundCode.length > 6) {
-          const parts = foundCode.split('/');
-          foundCode = parts[parts.length - 1];
-        }
-
-        foundCode = foundCode.slice(0, 6).toUpperCase();
-
-        if (foundCode.length >= 4) {
-          stopCamera();
-          onScanSuccess(foundCode);
-          onClose();
-          return;
-        }
-      }
-    }
-
-    animationFrameRef.current = requestAnimationFrame(scanQRCode);
-  };
 
   useEffect(() => {
     if (isOpen) {
@@ -146,7 +172,6 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
     };
   }, [isOpen, selectedCameraId, startCamera, stopCamera]);
 
-  // Kamera Değiştir
   const handleCameraChange = (e) => {
     const newId = e.target.value;
     setSelectedCameraId(newId);
@@ -154,7 +179,6 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
     startCamera(newId);
   };
 
-  // Sonraki kameraya hızlı geçiş yap (tek dokunuş)
   const handleCycleCamera = () => {
     if (cameras.length <= 1) return;
     const currentIndex = cameras.findIndex((c) => c.deviceId === selectedCameraId);
@@ -172,8 +196,8 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
       <div className="modal-content scanner-modal">
         <div className="modal-header">
           <div className="modal-title">
-            <Camera size={20} className="icon-neon" />
-            <span>QR Kod Okuyucu</span>
+            <ScanText size={20} className="icon-neon" />
+            <span>Kamera ile Oda Kodunu Oku</span>
           </div>
           <button type="button" className="btn-close" onClick={onClose} aria-label="Kapat">
             <X size={20} />
@@ -181,7 +205,6 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
         </div>
 
         <div className="scanner-body modal-scrollable-body">
-          {/* Kamera Seçici ve Hızlı Değiştirme Çubuğu */}
           <div className="camera-selector-bar" style={{ width: '100%', display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
             <select
               className="input-text camera-dropdown"
@@ -241,14 +264,20 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
             <div className="video-wrapper">
               <video ref={videoRef} className="scanner-video" playsInline muted />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
-              <div className="scan-target-box">
+              <div className="scan-target-box" style={{ width: '85%', height: '55%' }}>
                 <div className="laser-line"></div>
               </div>
             </div>
           )}
 
+          {detectedText && (
+            <div style={{ background: 'rgba(0,230,118,0.2)', color: '#00e676', padding: '6px 12px', borderRadius: '8px', fontWeight: '800', margin: '6px auto', fontSize: '0.9rem' }}>
+              Okundu: {detectedText}
+            </div>
+          )}
+
           <p className="scanner-subtext">
-            Liderin ekranındaki QR kodu vizöre hizalayın. Yanlış kamera açıldıysa yukarıdan kamerayı değiştirebilirsiniz.
+            Liderin ekranındaki <strong>6 haneli oda kodunu</strong> veya QR kodu vizöre tutun, kamera otomatik algılar.
           </p>
         </div>
       </div>
