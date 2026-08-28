@@ -40,6 +40,7 @@ export default function ActiveRoom({
   toastMessage,
   meshManager,
   onOfflineHandshakeSuccess,
+  showReconnectQRPrompt,
 }) {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
@@ -47,6 +48,13 @@ export default function ActiveRoom({
   const [isLeaveConfirmOpen, setIsLeaveConfirmOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hornCooldown, setHornCooldown] = useState(false);
+
+  // Otomatik yeniden bağlantı başarısız olduğunda QR modalını aç
+  useEffect(() => {
+    if (showReconnectQRPrompt) {
+      setIsOfflineQRModalOpen(true);
+    }
+  }, [showReconnectQRPrompt]);
 
   const peerList = Object.entries(peers || {});
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -152,15 +160,17 @@ export default function ActiveRoom({
       )}
 
       {/* 0 İnternet Çevrimdışı Hotspot Şeridi */}
-      <div className="hotspot-banner-strip" onClick={() => setIsOfflineQRModalOpen(true)}>
+      <div className={`hotspot-banner-strip ${showReconnectQRPrompt ? 'reconnect-urgent' : ''}`} onClick={() => setIsOfflineQRModalOpen(true)}>
         <div className="hotspot-banner-content">
           <WifiOff size={16} className="text-orange animate-pulse" />
           <span>
-            <strong>0 İnternet Hotspot Modu:</strong> İnternet yoksa doğrudan QR ile eşleşip konuşun.
+            {showReconnectQRPrompt
+              ? <><strong style={{ color: '#ff6b00' }}>⚠️ Bağlantı Koptu!</strong> QR ile yeniden eşleşin.</>
+              : <><strong>0 İnternet Hotspot Modu:</strong> İnternet yoksa doğrudan QR ile eşleşip konuşun.</>}
           </span>
         </div>
-        <button type="button" className="btn-banner-guide">
-          Çevrimdışı Eşleş
+        <button type="button" className={`btn-banner-guide ${showReconnectQRPrompt ? 'btn-urgent' : ''}`}>
+          {showReconnectQRPrompt ? '🔄 Yeniden Eşleş' : 'Çevrimdışı Eşleş'}
         </button>
       </div>
 

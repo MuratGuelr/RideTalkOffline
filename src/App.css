@@ -699,6 +699,24 @@
   white-space: nowrap;
 }
 
+.hotspot-banner-strip.reconnect-urgent {
+  background: linear-gradient(90deg, rgba(255, 23, 68, 0.25), rgba(255, 107, 0, 0.25));
+  border: 2px solid rgba(255, 23, 68, 0.7);
+  animation: urgentPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes urgentPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 23, 68, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(255, 23, 68, 0.6); }
+}
+
+.btn-banner-guide.btn-urgent {
+  background: linear-gradient(135deg, #ff1744, #ff6b00);
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  animation: urgentPulse 1.5s ease-in-out infinite;
+}
+
 /* =========================================================================
    RIDERS GRID & CARDS
    ========================================================================= */
