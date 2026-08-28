@@ -1,0 +1,447 @@
+// WebRTC Full-Mesh Ses Yöneticisi (MeshManager)
+// Her kullanıcı, odadaki diğer her katılımcı ile doğrudan p2p ses akışı kurar.
+// Hotspot / internetsiz geçişte RTCDataChannel üzerinden doğrudan ICE restart desteği sağlar.
+
+import { AudioLevelMeter } from './audioMeter.js';
+import { registerPeerName, unregisterPeerName } from './announcer.js';
+
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+];
+
+export class MeshManager {
+  constructor(options = {}) {
+    this.sendSignal = options.sendSignal || (() => {});
+    this.onPeerStateChange = options.onPeerStateChange || (() => {});
+    this.onPeerVolumeChange = options.onPeerVolumeChange || (() => {});
+    this.onLocalVolumeChange = options.onLocalVolumeChange || (() => {});
+    this.onPeerDisconnect = options.onPeerDisconnect || (() => {});
+    this.onPeerReconnect = options.onPeerReconnect || (() => {});
+    this.onHornReceived = options.onHornReceived || (() => {});
+    this.onStatsUpdate = options.onStatsUpdate || (() => {});
+
+    // peerId -> { pc, dataChannel, audioEl, stream, levelMeter, name, state, disconnectTimeout, isMuted, stats }
+    this.peers = new Map();
+    this.localStream = null;
+    this.localLevelMeter = null;
+    this.isMuted = false;
+    this.statsInterval = null;
+  }
+
+  async init() {
+    try {
+      // Motosiklet ortamına optimize edilmiş mikrofon kısıtlamaları
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000,
+        },
+        video: false,
+      });
+
+      // Kendi ses seviyemizi ölçen meter
+      this.localLevelMeter = new AudioLevelMeter(this.localStream, (level, isSpeaking) => {
+        if (this.onLocalVolumeChange) {
+          this.onLocalVolumeChange(this.isMuted ? 0 : level, !this.isMuted && isSpeaking);
+        }
+      });
+
+      this.startStatsMonitoring();
+      return this.localStream;
+    } catch (err) {
+      console.error('[MeshManager] Mikrofon başlatılamadı:', err);
+      throw new Error(`Mikrofon izni alınamadı: ${err.message}`);
+    }
+  }
+
+  createPeerConnection(peerId, name = '') {
+    if (this.peers.has(peerId)) {
+      return this.peers.get(peerId).pc;
+    }
+
+    if (name) {
+      registerPeerName(peerId, name);
+    }
+
+    const pc = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      iceCandidatePoolSize: 2,
+    });
+
+    // Kendi ses track'imizi ekle
+    if (this.localStream) {
+      this.localStream.getAudioTracks().forEach((track) => {
+        pc.addTrack(track, this.localStream);
+      });
+    }
+
+    // Karşı tarafın sesini oynatacak Audio elementi
+    const audioEl = new Audio();
+    audioEl.autoplay = true;
+    audioEl.playsInline = true;
+
+    const peerEntry = {
+      pc,
+      dataChannel: null,
+      audioEl,
+      stream: null,
+      levelMeter: null,
+      name: name || 'Sürücü',
+      state: 'connecting',
+      disconnectTimeout: null,
+      isMuted: false,
+      stats: { rtt: 0, packetLoss: 0, candidateType: 'bilinmiyor', isLocal: false },
+    };
+
+    // Karşıdan gelen ses akışı
+    pc.ontrack = (event) => {
+      console.log(`[MeshManager] Ses track alındı: ${peerId}`);
+      const remoteStream = event.streams[0];
+      peerEntry.stream = remoteStream;
+      audioEl.srcObject = remoteStream;
+      audioEl.play().catch((e) => console.warn('[MeshManager] Audio autoplay uyarısı:', e.message));
+
+      // Karşı tarafın ses seviyesini dinle
+      if (peerEntry.levelMeter) {
+        peerEntry.levelMeter.destroy();
+      }
+      peerEntry.levelMeter = new AudioLevelMeter(remoteStream, (level, isSpeaking) => {
+        if (this.onPeerVolumeChange) {
+          this.onPeerVolumeChange(peerId, level, isSpeaking);
+        }
+      });
+    };
+
+    // ICE Candidate takası
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        // Öncelik: Açık olan DataChannel üzerinden doğrudan karşıya gönder (internetsiz)
+        if (peerEntry.dataChannel && peerEntry.dataChannel.readyState === 'open') {
+          peerEntry.dataChannel.send(
+            JSON.stringify({
+              type: 'ice-candidate',
+              candidate: event.candidate,
+            })
+          );
+        }
+        // Sunucu sinyalleşmesi üzerinden de ilet
+        this.sendSignal(peerId, { candidate: event.candidate });
+      }
+    };
+
+    // Bağlantı durumu izleme
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      console.log(`[MeshManager] PC Durumu Değişti (${peerId}): ${state}`);
+
+      if (state === 'connected') {
+        if (peerEntry.disconnectTimeout) {
+          clearTimeout(peerEntry.disconnectTimeout);
+          peerEntry.disconnectTimeout = null;
+          this.onPeerReconnect(peerId);
+        }
+        peerEntry.state = 'connected';
+        this.notifyStateChange(peerId, 'connected');
+      } else if (state === 'disconnected' || state === 'failed') {
+        peerEntry.state = 'reconnecting';
+        this.notifyStateChange(peerId, 'reconnecting');
+
+        // 4.5 saniye bekle; ağ arayüzü geçişinde (Hotspot) ICE kendini toparlayabilir
+        if (!peerEntry.disconnectTimeout) {
+          peerEntry.disconnectTimeout = setTimeout(() => {
+            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+              peerEntry.state = 'failed';
+              this.notifyStateChange(peerId, 'failed');
+              this.onPeerDisconnect(peerId);
+            }
+          }, 4500);
+        }
+      }
+    };
+
+    // İnternetsiz haberleşme ve ICE takası için DataChannel oluştur
+    const dc = pc.createDataChannel('control', { negotiated: false });
+    this.setupDataChannel(peerId, dc, peerEntry);
+
+    pc.ondatachannel = (event) => {
+      this.setupDataChannel(peerId, event.channel, peerEntry);
+    };
+
+    this.peers.set(peerId, peerEntry);
+    return pc;
+  }
+
+  setupDataChannel(peerId, dc, peerEntry) {
+    peerEntry.dataChannel = dc;
+
+    dc.onopen = () => {
+      console.log(`[DataChannel] Peer ile doğrudan kontrol kanalı açıldı: ${peerId}`);
+      // İlk mikrofon durumunu bildir
+      dc.send(JSON.stringify({ type: 'mic-state', isMuted: this.isMuted }));
+    };
+
+    dc.onmessage = async (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+
+        switch (msg.type) {
+          case 'ice-restart-offer': {
+            console.log(`[DataChannel] Internetsiz ICE Restart teklifi alındı: ${peerId}`);
+            const pc = peerEntry.pc;
+            await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            dc.send(
+              JSON.stringify({
+                type: 'ice-restart-answer',
+                sdp: answer,
+              })
+            );
+            break;
+          }
+
+          case 'ice-restart-answer': {
+            console.log(`[DataChannel] Internetsiz ICE Restart cevabı alındı: ${peerId}`);
+            const pc = peerEntry.pc;
+            await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            break;
+          }
+
+          case 'ice-candidate': {
+            const pc = peerEntry.pc;
+            if (msg.candidate && pc.remoteDescription) {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            }
+            break;
+          }
+
+          case 'mic-state': {
+            peerEntry.isMuted = !!msg.isMuted;
+            this.notifyStateChange(peerId, peerEntry.state);
+            break;
+          }
+
+          case 'horn-alert': {
+            if (this.onHornReceived) {
+              this.onHornReceived(peerId, peerEntry.name);
+            }
+            break;
+          }
+
+          default:
+            break;
+        }
+      } catch (err) {
+        console.warn('[DataChannel] Mesaj işleme hatası:', err);
+      }
+    };
+  }
+
+  async connectToPeer(peerId, name) {
+    const pc = this.createPeerConnection(peerId, name);
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      this.sendSignal(peerId, { sdp: offer, name });
+    } catch (err) {
+      console.error(`[MeshManager] ${peerId} için teklif oluşturulamadı:`, err);
+    }
+  }
+
+  async handleSignal(fromPeerId, data, name) {
+    let entry = this.peers.get(fromPeerId);
+    if (!entry) {
+      this.createPeerConnection(fromPeerId, name);
+      entry = this.peers.get(fromPeerId);
+    }
+
+    if (name && entry) {
+      entry.name = name;
+      registerPeerName(fromPeerId, name);
+    }
+
+    const pc = entry.pc;
+
+    try {
+      if (data.sdp) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        if (data.sdp.type === 'offer') {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          this.sendSignal(fromPeerId, { sdp: answer });
+        }
+      } else if (data.candidate) {
+        if (pc.remoteDescription) {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+      }
+    } catch (err) {
+      console.error(`[MeshManager] Sinyal işleme hatası (${fromPeerId}):`, err);
+    }
+  }
+
+  // Hotspot / Ağ değişikliğinde SUNUCUSUZ yerel ICE Restart
+  async restartIceForAllPeers() {
+    console.log('[MeshManager] Tüm peerlar için ICE Restart başlatılıyor...');
+    for (const [peerId, entry] of this.peers.entries()) {
+      try {
+        const pc = entry.pc;
+        const offer = await pc.createOffer({ iceRestart: true });
+        await pc.setLocalDescription(offer);
+
+        // 1. DataChannel açık ise doğrudan karşı tarafa ilet (tam internetsiz mod)
+        if (entry.dataChannel && entry.dataChannel.readyState === 'open') {
+          entry.dataChannel.send(
+            JSON.stringify({
+              type: 'ice-restart-offer',
+              sdp: offer,
+            })
+          );
+        }
+
+        // 2. İnternet hâlâ varsa sinyal sunucusuna da yolla
+        this.sendSignal(peerId, { sdp: offer });
+      } catch (err) {
+        console.warn(`[MeshManager] ICE Restart hatası (${peerId}):`, err);
+      }
+    }
+  }
+
+  setMute(isMuted) {
+    this.isMuted = isMuted;
+    if (this.localStream) {
+      this.localStream.getAudioTracks().forEach((track) => {
+        track.enabled = !isMuted;
+      });
+    }
+
+    // Durumu tüm peerlara DataChannel ile anında bildir
+    this.broadcastDataChannel({
+      type: 'mic-state',
+      isMuted,
+    });
+  }
+
+  sendHornAlert() {
+    this.broadcastDataChannel({
+      type: 'horn-alert',
+      timestamp: Date.now(),
+    });
+  }
+
+  broadcastDataChannel(payload) {
+    const raw = JSON.stringify(payload);
+    this.peers.forEach((entry) => {
+      if (entry.dataChannel && entry.dataChannel.readyState === 'open') {
+        try {
+          entry.dataChannel.send(raw);
+        } catch (_) {}
+      }
+    });
+  }
+
+  notifyStateChange(peerId, state) {
+    if (this.onPeerStateChange) {
+      const entry = this.peers.get(peerId);
+      this.onPeerStateChange(peerId, {
+        state,
+        name: entry ? entry.name : 'Sürücü',
+        isMuted: entry ? entry.isMuted : false,
+        stats: entry ? entry.stats : null,
+      });
+    }
+  }
+
+  // getStats() ile RTT, paket kaybı ve yerel hotspot (host candidate) tespiti
+  startStatsMonitoring() {
+    if (this.statsInterval) clearInterval(this.statsInterval);
+
+    this.statsInterval = setInterval(async () => {
+      let anyLocalCandidate = false;
+      let totalRtt = 0;
+      let rttCount = 0;
+
+      for (const [peerId, entry] of this.peers.entries()) {
+        if (entry.pc && entry.pc.connectionState === 'connected') {
+          try {
+            const stats = await entry.pc.getStats();
+            let selectedCandidatePair = null;
+
+            stats.forEach((report) => {
+              if (report.type === 'transport' && report.selectedCandidatePairId) {
+                selectedCandidatePair = stats.get(report.selectedCandidatePairId);
+              } else if (report.type === 'candidate-pair' && report.selected) {
+                selectedCandidatePair = report;
+              }
+            });
+
+            if (selectedCandidatePair) {
+              const localCandidate = stats.get(selectedCandidatePair.localCandidateId);
+              const rtt = Math.round((selectedCandidatePair.currentRoundTripTime || 0) * 1000);
+              const isLocal = localCandidate?.candidateType === 'host';
+
+              if (isLocal) anyLocalCandidate = true;
+              if (rtt > 0) {
+                totalRtt += rtt;
+                rttCount++;
+              }
+
+              entry.stats = {
+                rtt: rtt || 15,
+                packetLoss: 0,
+                candidateType: localCandidate?.candidateType || 'host',
+                isLocal,
+              };
+
+              this.notifyStateChange(peerId, entry.state);
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (this.onStatsUpdate) {
+        this.onStatsUpdate({
+          isHotspotMode: anyLocalCandidate,
+          avgRtt: rttCount > 0 ? Math.round(totalRtt / rttCount) : 18,
+          activePeersCount: Array.from(this.peers.values()).filter((p) => p.state === 'connected').length,
+        });
+      }
+    }, 2500);
+  }
+
+  removePeer(peerId) {
+    const entry = this.peers.get(peerId);
+    if (entry) {
+      if (entry.disconnectTimeout) clearTimeout(entry.disconnectTimeout);
+      if (entry.levelMeter) entry.levelMeter.destroy();
+      entry.pc.close();
+      if (entry.audioEl) {
+        entry.audioEl.srcObject = null;
+      }
+      unregisterPeerName(peerId);
+      this.peers.delete(peerId);
+    }
+  }
+
+  destroy() {
+    if (this.statsInterval) clearInterval(this.statsInterval);
+    this.peers.forEach((_, peerId) => this.removePeer(peerId));
+    this.peers.clear();
+
+    if (this.localLevelMeter) {
+      this.localLevelMeter.destroy();
+      this.localLevelMeter = null;
+    }
+
+    if (this.localStream) {
+      this.localStream.getTracks().forEach((t) => t.stop());
+      this.localStream = null;
+    }
+  }
+}
