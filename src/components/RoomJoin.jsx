@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import QRScannerModal from './QRScannerModal.jsx';
-import { User, KeyRound, QrCode, ArrowRight, ArrowLeft, ShieldAlert } from 'lucide-react';
+import { User, KeyRound, ArrowRight, ArrowLeft, ShieldAlert } from 'lucide-react';
 
 export default function RoomJoin({ initialRoomCode = '', onJoinRoom, isConnecting, error, onBack }) {
   const [name, setName] = useState(localStorage.getItem('ridetalk_name') || 'Sürücü');
-  const [roomCode, setRoomCode] = useState(initialRoomCode);
-  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [roomCode, setRoomCode] = useState(initialRoomCode || 'MOTO-RIDE');
 
   useEffect(() => {
     if (initialRoomCode) {
@@ -20,14 +18,6 @@ export default function RoomJoin({ initialRoomCode = '', onJoinRoom, isConnectin
     onJoinRoom(roomCode.trim().toUpperCase(), name.trim());
   };
 
-  const handleScanSuccess = (scannedCode) => {
-    setRoomCode(scannedCode.toUpperCase());
-    if (name.trim()) {
-      localStorage.setItem('ridetalk_name', name.trim());
-      onJoinRoom(scannedCode.toUpperCase(), name.trim());
-    }
-  };
-
   return (
     <div className="card-cockpit">
       <div className="card-header">
@@ -35,8 +25,8 @@ export default function RoomJoin({ initialRoomCode = '', onJoinRoom, isConnectin
           <ArrowLeft size={20} />
         </button>
         <div className="card-title-group">
-          <h2 className="card-title">İnterkom Odasına Katıl</h2>
-          <p className="card-subtitle">Liderin verdiği kodla veya QR ile bağlanın</p>
+          <h2 className="card-title">Telsiz Odasına Katıl</h2>
+          <p className="card-subtitle">Oda kodunu yazarak veya varsayılan gruba bağlanın</p>
         </div>
       </div>
 
@@ -69,38 +59,27 @@ export default function RoomJoin({ initialRoomCode = '', onJoinRoom, isConnectin
 
         <div className="input-field-group">
           <label htmlFor="join-room-code" className="input-label">
-            6 Haneli Oda Kodu
+            Oda Kodu / Grup Adı
           </label>
-          <div className="input-with-action">
-            <div className="input-with-icon flex-1">
-              <KeyRound size={18} className="input-icon" />
-              <input
-                id="join-room-code"
-                type="text"
-                className="input-text text-uppercase code-input"
-                placeholder="ÖRN: K7X9AB"
-                value={roomCode}
-                onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                maxLength={6}
-                required
-              />
-            </div>
-            <button
-              type="button"
-              className="btn-secondary btn-qr-scan"
-              onClick={() => setIsScannerOpen(true)}
-              title="Kamerayla QR Oku"
-            >
-              <QrCode size={18} />
-              <span>QR Oku</span>
-            </button>
+          <div className="input-with-icon">
+            <KeyRound size={18} className="input-icon" />
+            <input
+              id="join-room-code"
+              type="text"
+              className="input-text text-uppercase code-input"
+              placeholder="ÖRN: MOTO-RIDE"
+              value={roomCode}
+              onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+              maxLength={20}
+              required
+            />
           </div>
         </div>
 
         <button
           type="submit"
           className="btn-primary btn-full btn-large btn-glow mt-3"
-          disabled={isConnecting || !name.trim() || roomCode.trim().length < 4}
+          disabled={isConnecting || !name.trim() || !roomCode.trim()}
         >
           {isConnecting ? (
             <span className="flex-center gap-2">
@@ -109,18 +88,12 @@ export default function RoomJoin({ initialRoomCode = '', onJoinRoom, isConnectin
             </span>
           ) : (
             <span className="flex-center gap-2">
-              <span>İnterkoma Katıl</span>
+              <span>Telsize Katıl</span>
               <ArrowRight size={20} />
             </span>
           )}
         </button>
       </form>
-
-      <QRScannerModal
-        isOpen={isScannerOpen}
-        onClose={() => setIsScannerOpen(false)}
-        onScanSuccess={handleScanSuccess}
-      />
     </div>
   );
 }

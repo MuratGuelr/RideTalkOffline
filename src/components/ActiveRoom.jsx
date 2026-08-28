@@ -2,25 +2,21 @@ import React, { useState, useEffect } from 'react';
 import ParticipantCard from './ParticipantCard.jsx';
 import ConnectionQualityBadge from './ConnectionQualityBadge.jsx';
 import HotspotGuideModal from './HotspotGuideModal.jsx';
-import OfflineQRHandshakeModal from './OfflineQRHandshakeModal.jsx';
-import QRCodeDisplay from './QRCodeDisplay.jsx';
 import {
   Mic,
   MicOff,
   Bell,
   Radio,
   PhoneOff,
-  QrCode,
   Lock,
   LockOpen,
   Volume2,
   Users,
   X,
-  Zap,
   Maximize,
   Minimize,
   AlertTriangle,
-  WifiOff,
+  Wifi,
 } from 'lucide-react';
 
 export default function ActiveRoom({
@@ -38,27 +34,13 @@ export default function ActiveRoom({
   isWakeLockActive,
   isOnline,
   toastMessage,
-  meshManager,
-  onOfflineHandshakeSuccess,
-  showReconnectQRPrompt,
 }) {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
-  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
-  const [isOfflineQRModalOpen, setIsOfflineQRModalOpen] = useState(false);
   const [isLeaveConfirmOpen, setIsLeaveConfirmOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hornCooldown, setHornCooldown] = useState(false);
 
-  // Otomatik yeniden bağlantı başarısız olduğunda QR modalını aç
-  useEffect(() => {
-    if (showReconnectQRPrompt) {
-      setIsOfflineQRModalOpen(true);
-    }
-  }, [showReconnectQRPrompt]);
-
   const peerList = Object.entries(peers || {});
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-  const joinUrl = `${currentOrigin}?room=${roomCode}`;
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -99,19 +81,9 @@ export default function ActiveRoom({
       <header className="cockpit-hud-bar">
         <div className="hud-left">
           <div className="hud-room-code" title="Oda Kodu">
-            <span className="hud-code-prefix">ODA</span>
+            <Radio size={15} className="text-neon" />
             <span className="hud-code-value">{roomCode}</span>
           </div>
-
-          <button
-            type="button"
-            className="hud-btn-action"
-            onClick={() => setIsQrModalOpen(true)}
-            title="Oda QR Kodunu Göster"
-          >
-            <QrCode size={16} />
-            <span className="hide-mobile">QR</span>
-          </button>
 
           {/* Tam Ekran Butonu */}
           <button
@@ -159,17 +131,14 @@ export default function ActiveRoom({
         </div>
       )}
 
-      {/* Hotspot Geçiş Bilgi Şeridi */}
-      <div className="hotspot-banner-strip">
+      {/* Hotspot Durum Şeridi */}
+      <div className="hotspot-banner-strip" style={{ cursor: 'default' }}>
         <div className="hotspot-banner-content">
-          <WifiOff size={16} className="text-orange animate-pulse" />
+          <Wifi size={16} className="text-neon animate-pulse" />
           <span>
-            <strong>Hotspot Geçişi:</strong> Ağ değişirse otomatik yeniden bağlanır.
+            <strong>Yerel Ağ İnterkomu:</strong> Sürücüler aynı ağda otomatik eşleşir ve ses yerel Hotspot üzerinden akar.
           </span>
         </div>
-        <button type="button" className="btn-banner-guide" onClick={() => setIsOfflineQRModalOpen(true)}>
-          Manuel Eşleş
-        </button>
       </div>
 
       {/* Sürücüler Tablosu */}
@@ -217,9 +186,9 @@ export default function ActiveRoom({
         </div>
       </main>
 
-      {/* Eldivenle Kullanıma Uygun Alt Kontroller */}
+      {/* Eldivenle Kullanıma Uygun Alt Kontroller (3 Büyük Buton) */}
       <footer className="cockpit-controls-dock">
-        <div className="controls-grid">
+        <div className="controls-grid" style={{ gridTemplateColumns: '1.4fr 1fr 1fr' }}>
           {/* Mikrofon Aç / Kapat Butonu */}
           <button
             type="button"
@@ -243,22 +212,11 @@ export default function ActiveRoom({
             <span className="control-label">İKAZ BİP</span>
           </button>
 
-          {/* 0 İnternet Çevrimdışı QR Eşleşme */}
-          <button
-            type="button"
-            className="btn-glove-action btn-hotspot"
-            onClick={() => setIsOfflineQRModalOpen(true)}
-            title="0 İnternet Çevrimdışı QR Eşleşme"
-          >
-            <WifiOff size={24} />
-            <span className="control-label">0 NET QR</span>
-          </button>
-
           {/* Odadan Ayrıl Butonu */}
           <button
             type="button"
             className="btn-glove-action btn-leave"
-            onClick={() => setIsLeaveConfirmOpen(true)}
+            onClick={() => setIsLeaveConfirmOpen(false)}
             title="İnterkomdan Ayrıl"
           >
             <PhoneOff size={24} />
@@ -267,19 +225,8 @@ export default function ActiveRoom({
         </div>
       </footer>
 
-      {/* Hotspot Geçiş Modalı */}
+      {/* Hotspot Bilgi Modalı */}
       <HotspotGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
-
-      {/* 0 İnternet Doğrudan QR Eşleşme Modalı */}
-      <OfflineQRHandshakeModal
-        isOpen={isOfflineQRModalOpen}
-        onClose={() => setIsOfflineQRModalOpen(false)}
-        meshManager={meshManager}
-        selfName={selfName}
-        onHandshakeSuccess={(partnerName) => {
-          if (onOfflineHandshakeSuccess) onOfflineHandshakeSuccess(partnerName);
-        }}
-      />
 
       {/* Odadan Ayrılma Güvenlik Modalı */}
       {isLeaveConfirmOpen && (
@@ -319,26 +266,6 @@ export default function ActiveRoom({
                   Evet, Ayrıl
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* QR Kod Paylaşım Modalı */}
-      {isQrModalOpen && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setIsQrModalOpen(false); }}>
-          <div className="modal-content">
-            <div className="modal-header">
-              <div className="modal-title">
-                <QrCode size={20} className="icon-neon" />
-                <span>Odaya Katılım QR Kodu</span>
-              </div>
-              <button type="button" className="btn-close" onClick={() => setIsQrModalOpen(false)}>
-                <X size={20} />
-              </button>
-            </div>
-            <div className="modal-scrollable-body p-4">
-              <QRCodeDisplay roomCode={roomCode} joinUrl={joinUrl} />
             </div>
           </div>
         </div>

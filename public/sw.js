@@ -1,7 +1,7 @@
 // RideTalk Service Worker — 100% Çevrimdışı PWA Desteği
-const CACHE_NAME = 'ridetalk-offline-v2';
+const CACHE_NAME = 'ridetalk-offline-v3';
 
-const STATIC_ASSETS = [
+const PRECACHE_URLS = [
   '/',
   '/index.html',
   '/favicon.svg',
@@ -11,25 +11,27 @@ const STATIC_ASSETS = [
   '/sounds/someone-left.mp3',
 ];
 
+// Kurulum: Statik temel dosyaları önbelleğe al
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('[SW] Tüm statik kaynaklar ve sesler önbelleğe alınıyor...');
-      return cache.addAll(STATIC_ASSETS).catch((err) => {
-        console.warn('[SW] Bazı kaynaklar önbelleğe alınamadı:', err);
+      console.log('[SW] PWA Çevrimdışı önbellek hazırlanıyor...');
+      return cache.addAll(PRECACHE_URLS).catch((err) => {
+        console.warn('[SW] Bazı önbellek dosyaları atlandı:', err);
       });
     })
   );
   self.skipWaiting();
 });
 
+// Etkinleştirme: Eski önbellekleri temizle ve istemcileri hemen sahiplen
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
           if (key !== CACHE_NAME) {
-            console.log('[SW] Eski önbellek temizleniyor:', key);
+            console.log('[SW] Eski önbellek temizlendi:', key);
             return caches.delete(key);
           }
         })
@@ -39,20 +41,27 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Cache First, Network Fallback (İnternet olmasa dahi uygulama anında açılır)
+// Ağ/Önbellek Stratejisi: Stale-While-Revalidate + Offline Fallback
 self.addEventListener('fetch', (event) => {
-  // Sadece GET isteklerini önbellekten sun
   if (event.request.method !== 'GET') return;
+
+  const url = new URL(event.request.url);
+
+  // Firebase ve harici API isteklerini önbelleğe alma
+  if (url.origin.includes('firebaseio.com') || url.origin.includes('googleapis.com')) {
+    return;
+  }
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
+      // 1. Önbellekte varsa HEMEN dön (0ms bekleme)
       if (cachedResponse) {
-        // Arkaplanda önbelleği tazele
+        // Arka planda güncelle (ağ varsa)
         fetch(event.request)
           .then((networkResponse) => {
             if (networkResponse && networkResponse.status === 200) {
               caches.open(CACHE_NAME).then((cache) => {
-                cache.put(event.request, networkResponse.clone());
+                cache.put(event.request, networkResponse);
               });
             }
           })
@@ -60,9 +69,10 @@ self.addEventListener('fetch', (event) => {
         return cachedResponse;
       }
 
+      // 2. Önbellekte yoksa ağdan çek ve gelecekte çevrimdışı kullanım için kaydet
       return fetch(event.request)
         .then((networkResponse) => {
-          if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+          if (!networkResponse || networkResponse.status !== 200) {
             return networkResponse;
           }
           const responseToCache = networkResponse.clone();
@@ -72,9 +82,9 @@ self.addEventListener('fetch', (event) => {
           return networkResponse;
         })
         .catch(() => {
-          // İnternet yoksa ana sayfayı döndür
-          if (event.request.headers.get('accept')?.includes('text/html')) {
-            return caches.match('/index.html');
+          // 3. Ağ tamamen yoksa ve HTML sayfası isteniyorsa ana sayfayı ver
+          if (event.request.headers.get('accept')?.includes('text/html') || event.request.mode === 'navigate') {
+            return caches.match('/index.html') || caches.match('/');
           }
         });
     })
