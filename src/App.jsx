@@ -15,6 +15,8 @@ import {
   playMuteSound,
   playUnmuteSound,
   playSomeoneLeftSound,
+  preloadAllSounds,
+  getAudioContext,
 } from './lib/announcer.js';
 import { keepScreenAwake, releaseScreenAwake, onWakeLockStatusChange } from './lib/wakeLock.js';
 import { watchNetworkChanges } from './lib/networkWatcher.js';
@@ -117,10 +119,14 @@ export default function App() {
     };
   }, []);
 
-  // İlk kullanıcı dokunuşunda AudioContext kilidini aç
+  // İlk kullanıcı dokunuşunda AudioContext kilidini aç ve sesleri önbelleğe yükle
   const ensureAudioUnlocked = () => {
     if (!audioUnlocked) {
-      playAlertTone('horn');
+      const ctx = getAudioContext();
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      preloadAllSounds().catch(() => {});
       setAudioUnlocked(true);
     }
   };
@@ -241,8 +247,6 @@ export default function App() {
             stats: null,
           },
         }));
-
-        // Yeni katılan kişi bize teklif (Offer) gönderecektir, biz hazır bekliyoruz.
       });
 
       // SDP veya ICE sinyali geldiğinde
@@ -299,7 +303,6 @@ export default function App() {
         setRoomData(newRoomData);
         setIsConnecting(false);
 
-        // Lider odayı oluşturur oluşturmaz mikrofonunu ve WebRTC motorunu başlatıp Kokpite girer
         try {
           await startMeshSession(newRoomData, []);
           setView('active');
@@ -335,7 +338,6 @@ export default function App() {
         };
         setRoomData(newRoomData);
 
-        // Mevcut katılımcıları UI'a ekle
         const initialPeers = {};
         (msg.existingPeers || []).forEach((p) => {
           initialPeers[p.id] = {
@@ -348,7 +350,6 @@ export default function App() {
         setPeers(initialPeers);
 
         try {
-          // Katılımcı oturumu başlatır ve mevcut kişilere teklif (Offer) gönderir
           await startMeshSession(newRoomData, msg.existingPeers || []);
           setIsConnecting(false);
           setView('active');

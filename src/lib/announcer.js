@@ -1,39 +1,118 @@
-// Web Speech API ve Yerel MP3 Ses Efektleri Modülü (/public/sounds/)
-// Mute, Unmute, Someone Left ve Türkçe TTS anonsları
+// Web Audio API ve Yerel MP3 Ses Efektleri Modülü (/public/sounds/)
+// Mute, Unmute, Someone Left ve Doğal Türkçe TTS Anonsları
 
 const nameCache = new Map(); // peerId -> isim
 let isSpeechAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window;
-let isAudioToneAvailable = typeof window !== 'undefined' && ('AudioContext' in window || 'webkitAudioContext' in window);
 let audioCtx = null;
+const audioBuffers = new Map(); // filename -> AudioBuffer
 
-// Ses dosyalarını bellekte önbelleğe al (sıfır gecikme)
-const soundCache = {};
+// Chrome/Safari'nin konuşmayı yarıda kesmesini (Garbage Collection) önlemek için referans
+let currentUtterance = null;
+let cachedTrVoice = null;
 
-function getSound(filename) {
-  if (typeof window === 'undefined') return null;
-  if (!soundCache[filename]) {
-    const audio = new Audio('/sounds/' + filename);
-    audio.preload = 'auto';
-    soundCache[filename] = audio;
-  }
-  return soundCache[filename];
+// Tarayıcıdaki Türkçe sesleri yükle ve önbelleğe al
+function updateVoices() {
+  if (!isSpeechAvailable) return;
+  try {
+    const voices = window.speechSynthesis.getVoices();
+    cachedTrVoice =
+      voices.find((v) => v.lang === 'tr-TR' || v.lang === 'tr_TR') ||
+      voices.find((v) => v.lang.startsWith('tr')) ||
+      null;
+  } catch (_) {}
 }
 
-// MP3 ses dosyasını anında çal
-export function playSoundFile(filename) {
+if (isSpeechAvailable) {
+  updateVoices();
+  if (typeof window.speechSynthesis.onvoiceschanged !== 'undefined') {
+    window.speechSynthesis.onvoiceschanged = updateVoices;
+  }
+}
+
+export function getAudioContext() {
+  if (!audioCtx && typeof window !== 'undefined') {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      audioCtx = new AudioContextClass();
+    }
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+// MP3 dosyasını arkaplanda fetch edip AudioBuffer'a decode et
+export async function loadSoundBuffer(filename) {
   try {
-    const sound = getSound(filename);
-    if (sound) {
-      sound.currentTime = 0;
-      const playPromise = sound.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          console.warn('[Announcer] MP3 çalma uyarısı (' + filename + '):', err.message);
-        });
-      }
+    const ctx = getAudioContext();
+    if (!ctx) return null;
+    if (audioBuffers.has(filename)) return audioBuffers.get(filename);
+
+    const response = await fetch(`/sounds/${filename}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const arrayBuffer = await response.arrayBuffer();
+
+    const decoded = await new Promise((resolve, reject) => {
+      ctx.decodeAudioData(arrayBuffer, resolve, reject);
+    });
+
+    audioBuffers.set(filename, decoded);
+    return decoded;
+  } catch (err) {
+    console.warn(`[Announcer] Ses yüklenemedi (${filename}):`, err.message);
+    return null;
+  }
+}
+
+export async function preloadAllSounds() {
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    await ctx.resume();
+  }
+  await Promise.all([
+    loadSoundBuffer('mute.mp3'),
+    loadSoundBuffer('unmute.mp3'),
+    loadSoundBuffer('someone-left.mp3'),
+  ]);
+}
+
+export async function playSoundFile(filename) {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) {
+      const fallbackAudio = new Audio(`/sounds/${filename}`);
+      fallbackAudio.play().catch(() => {});
+      return;
+    }
+
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
+
+    let buffer = audioBuffers.get(filename);
+    if (!buffer) {
+      buffer = await loadSoundBuffer(filename);
+    }
+
+    if (buffer) {
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = 1.0;
+      source.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      source.start(0);
+    } else {
+      const fallbackAudio = new Audio(`/sounds/${filename}`);
+      fallbackAudio.play().catch(() => {});
     }
   } catch (err) {
-    console.warn('[Announcer] MP3 çalınamadı:', err);
+    console.warn(`[Announcer] Ses çalma hatası (${filename}):`, err.message);
+    try {
+      const fallbackAudio = new Audio(`/sounds/${filename}`);
+      fallbackAudio.play().catch(() => {});
+    } catch (_) {}
   }
 }
 
@@ -50,17 +129,6 @@ export function playUnmuteSound() {
 // 3. Biri Ayrılınca / Bağlantı Kesilince (/sounds/someone-left.mp3)
 export function playSomeoneLeftSound() {
   playSoundFile('someone-left.mp3');
-}
-
-function getAudioContext() {
-  if (!audioCtx && isAudioToneAvailable) {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    audioCtx = new AudioContextClass();
-  }
-  if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume();
-  }
-  return audioCtx;
 }
 
 export function registerPeerName(peerId, name) {
@@ -87,6 +155,10 @@ export function playAlertTone(type = 'beep') {
     const ctx = getAudioContext();
     if (!ctx) return;
 
+    if (ctx.state === 'suspended') {
+      ctx.resume();
+    }
+
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
@@ -110,25 +182,40 @@ export function playAlertTone(type = 'beep') {
 }
 
 /**
- * Türkçe TTS metin anonsu yapar
+ * Fonetik olarak net, kesilmeyen ve doğru Türkçe TTS konuşması yapar
  */
 export function speakText(text) {
   if (!isSpeechAvailable || !text) return;
 
   try {
+    if (!cachedTrVoice) {
+      updateVoices();
+    }
+
+    // Önceki konuşmayı sonlandır
     window.speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    // Özel sembolleri ve gereksiz karakterleri temizle
+    const cleanText = text.replace(/[*#_~`]/g, '').trim();
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = 'tr-TR';
-    utterance.rate = 1.05;
+    utterance.rate = 0.95; // Doğal ve anlaşılır konuşma hızı
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
 
-    const voices = window.speechSynthesis.getVoices();
-    const trVoice = voices.find((v) => v.lang.startsWith('tr'));
-    if (trVoice) {
-      utterance.voice = trVoice;
+    if (cachedTrVoice) {
+      utterance.voice = cachedTrVoice;
     }
+
+    // Chrome garbage collection kesintisini önle
+    currentUtterance = utterance;
+    utterance.onend = () => {
+      currentUtterance = null;
+    };
+    utterance.onerror = () => {
+      currentUtterance = null;
+    };
 
     window.speechSynthesis.speak(utterance);
   } catch (err) {
@@ -140,17 +227,28 @@ export function announceJoin(peerId, name) {
   if (name) registerPeerName(peerId, name);
   const riderName = name || getPeerName(peerId);
   playUnmuteSound();
-  speakText(riderName + ' interkoma katıldı');
+
+  // MP3 sesi bittikten sonra net anons yap
+  setTimeout(() => {
+    speakText(`${riderName} odaya katıldı.`);
+  }, 250);
 }
 
 export function announceDisconnect(peerId) {
   const riderName = getPeerName(peerId);
   playSomeoneLeftSound();
-  speakText(riderName + ' bağlantısı koptu');
+
+  // someone-left.mp3 sesinin ardından anlaşılır şekilde söyle
+  setTimeout(() => {
+    speakText(`${riderName} ayrıldı.`);
+  }, 350);
 }
 
 export function announceReconnect(peerId) {
   const riderName = getPeerName(peerId);
   playUnmuteSound();
-  speakText(riderName + ' tekrar bağlandı');
+
+  setTimeout(() => {
+    speakText(`${riderName} tekrar bağlandı.`);
+  }, 250);
 }
