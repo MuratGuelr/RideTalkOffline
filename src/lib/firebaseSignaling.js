@@ -1,5 +1,5 @@
 // Firebase Realtime Database tabanlı WebRTC Sinyalleşme İstemcisi
-// Tamamen serverless çalışır, harici Node.js / WebSocket sunucusu gerektirmez.
+// Vercel / Serverless ortamında %100 otomatik oda eşleşmesi sağlar.
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
@@ -11,7 +11,8 @@ import {
   onChildAdded,
   onChildRemoved,
   onDisconnect,
-  remove
+  remove,
+  update,
 } from 'firebase/database';
 
 export function getFirebaseConfig() {
@@ -31,24 +32,19 @@ export function isFirebaseConfigured() {
   return !!(cfg.apiKey && (cfg.databaseURL || cfg.projectId));
 }
 
-function generateRoomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
-}
-
 export class FirebaseSignalingClient {
   constructor() {
     this.app = null;
     this.db = null;
-    this.peerId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `peer_${Math.random().toString(36).substring(2, 11)}`;
+    this.peerId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID().substring(0, 8)
+        : `p_${Math.random().toString(36).substring(2, 9)}`;
     this.currentRoom = null;
     this.listeners = new Map();
     this.activeUnsubscribers = [];
     this.knownPeers = new Set();
+    this.heartbeatInterval = null;
   }
 
   on(event, callback) {
@@ -99,100 +95,87 @@ export class FirebaseSignalingClient {
     }
   }
 
-  async createRoom(name) {
+  // ⭐ OTOMATİK ODAYA KATIL (Tüm sürücüler aynı odaya otomatik bağlanır)
+  async autoJoinGroup(roomName = 'MOTO-RIDE', name = 'Sürücü') {
     try {
       if (!this.db) await this.connect();
 
-      const peerName = (name || 'Lider Sürücü').trim();
-      const code = generateRoomCode();
-      this.currentRoom = code;
-      this.knownPeers.clear();
-      this.knownPeers.add(this.peerId);
-
-      const peerRef = ref(this.db, `rooms/${code}/peers/${this.peerId}`);
-
-      // Kurucu peer bilgisini oluştur
-      await set(peerRef, {
-        id: this.peerId,
-        name: peerName,
-        isLeader: true,
-        joinedAt: Date.now(),
-      });
-
-      // Bağlantı koparsa Realtime DB otomatik temizlesin
-      onDisconnect(peerRef).remove();
-
-      // Sinyal ve katılımcı dinleyicilerini başlat
-      this.listenToRoomSignals(code);
-      this.listenToPeers(code);
-
-      console.log(`[FirebaseSignaling] Oda Oluşturuldu: ${code} | Kurucu: ${peerName} (${this.peerId})`);
-
-      this.emit('room-created', {
-        type: 'room-created',
-        roomCode: code,
-        peerId: this.peerId,
-        name: peerName,
-      });
-    } catch (err) {
-      console.error('[FirebaseSignaling] Oda oluşturulamadı:', err);
-      this.emit('error', { message: `Oda oluşturulamadı: ${err.message}` });
-    }
-  }
-
-  async joinRoom(roomCode, name) {
-    try {
-      if (!this.db) await this.connect();
-
-      const targetCode = (roomCode || '').toUpperCase().trim();
+      const targetRoom = (roomName || 'MOTO-RIDE').toUpperCase().trim();
       const peerName = (name || 'Sürücü').trim();
-      this.currentRoom = targetCode;
+      this.currentRoom = targetRoom;
       this.knownPeers.clear();
       this.knownPeers.add(this.peerId);
 
-      const roomPeersRef = ref(this.db, `rooms/${targetCode}/peers`);
+      const roomPeersRef = ref(this.db, `rooms/${targetRoom}/peers`);
       const snapshot = await get(roomPeersRef);
 
-      if (!snapshot.exists()) {
-        this.emit('error', { message: `Oda bulunamadı (#${targetCode}). Lütfen kodu kontrol edin.` });
-        return;
+      const existingPeers = [];
+      const now = Date.now();
+
+      if (snapshot.exists()) {
+        const peersObj = snapshot.val() || {};
+        Object.values(peersObj).forEach((p) => {
+          // 2 dakikadan eski hayalet kullanıcıları ele
+          if (p && p.id && p.id !== this.peerId) {
+            const isRecent = !p.lastSeen || now - p.lastSeen < 120000;
+            if (isRecent) {
+              this.knownPeers.add(p.id);
+              existingPeers.push({ id: p.id, name: p.name || 'Sürücü' });
+            } else {
+              // Eski kaydı temizle
+              remove(ref(this.db, `rooms/${targetRoom}/peers/${p.id}`)).catch(() => {});
+            }
+          }
+        });
       }
 
-      const existingPeersObj = snapshot.val() || {};
-      const existingPeers = Object.values(existingPeersObj)
-        .filter((p) => p && p.id && p.id !== this.peerId)
-        .map((p) => {
-          this.knownPeers.add(p.id);
-          return { id: p.id, name: p.name };
-        });
-
-      const myPeerRef = ref(this.db, `rooms/${targetCode}/peers/${this.peerId}`);
+      // Kendi kaydımızı oluştur
+      const myPeerRef = ref(this.db, `rooms/${targetRoom}/peers/${this.peerId}`);
       await set(myPeerRef, {
         id: this.peerId,
         name: peerName,
-        isLeader: false,
-        joinedAt: Date.now(),
+        joinedAt: now,
+        lastSeen: now,
       });
 
+      // Bağlantı koparsa Realtime DB otomatik temizlesin
       onDisconnect(myPeerRef).remove();
 
       // Sinyal ve katılımcı dinleyicilerini başlat
-      this.listenToRoomSignals(targetCode);
-      this.listenToPeers(targetCode);
+      this.listenToRoomSignals(targetRoom);
+      this.listenToPeers(targetRoom);
+
+      // Heartbeat: Her 30 saniyede bir lastSeen güncelle
+      if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = setInterval(() => {
+        if (this.db && this.currentRoom) {
+          update(ref(this.db, `rooms/${this.currentRoom}/peers/${this.peerId}`), {
+            lastSeen: Date.now(),
+          }).catch(() => {});
+        }
+      }, 30000);
+
+      console.log(`[FirebaseSignaling] ✅ Gruba Katılındı: ${targetRoom} | İsim: ${peerName} | Mevcut Sürücüler:`, existingPeers);
 
       this.emit('joined', {
         type: 'joined',
         peerId: this.peerId,
-        roomCode: targetCode,
+        roomCode: targetRoom,
         name: peerName,
         existingPeers,
       });
-
-      console.log(`[FirebaseSignaling] Odaya Katılındı: ${targetCode} | İsim: ${peerName} | Mevcut Kişi: ${existingPeers.length}`);
     } catch (err) {
-      console.error('[FirebaseSignaling] Odaya katılım hatası:', err);
-      this.emit('error', { message: `Odaya katılırken hata oluştu: ${err.message}` });
+      console.error('[FirebaseSignaling] Gruba katılım hatası:', err);
+      this.emit('error', { message: `Bağlantı hatası: ${err.message}` });
     }
+  }
+
+  async createRoom(name) {
+    return this.autoJoinGroup('MOTO-RIDE', name);
+  }
+
+  async joinRoom(roomCode, name) {
+    return this.autoJoinGroup(roomCode || 'MOTO-RIDE', name);
   }
 
   listenToPeers(roomCode) {
@@ -202,24 +185,25 @@ export class FirebaseSignalingClient {
       const p = snapshot.val();
       if (p && p.id && p.id !== this.peerId && !this.knownPeers.has(p.id)) {
         this.knownPeers.add(p.id);
-        console.log(`[FirebaseSignaling] Yeni katılımcı algılandı: ${p.name} (${p.id})`);
+        console.log(`[FirebaseSignaling] 🏍️ Yeni sürücü odaya girdi: ${p.name} (${p.id})`);
         this.emit('peer-joined', {
           type: 'peer-joined',
           peerId: p.id,
-          name: p.name,
+          name: p.name || 'Sürücü',
         });
       }
     });
 
     const unsubRemoved = onChildRemoved(peersRef, (snapshot) => {
       const p = snapshot.val();
-      if (p && p.id && p.id !== this.peerId) {
-        this.knownPeers.delete(p.id);
-        console.log(`[FirebaseSignaling] Katılımcı ayrıldı: ${p.name} (${p.id})`);
+      const removedId = p?.id || snapshot.key;
+      if (removedId && removedId !== this.peerId) {
+        this.knownPeers.delete(removedId);
+        console.log(`[FirebaseSignaling] ❌ Sürücü ayrıldı: ${p?.name || removedId}`);
         this.emit('peer-left', {
           type: 'peer-left',
-          peerId: p.id,
-          name: p.name,
+          peerId: removedId,
+          name: p?.name || 'Sürücü',
         });
       }
     });
@@ -249,7 +233,6 @@ export class FirebaseSignalingClient {
     if (!this.db || !this.currentRoom || !targetPeerId) return;
 
     try {
-      // Firebase'e sadece saf JSON objesi aktarılır
       const cleanData = JSON.parse(JSON.stringify(data));
       const targetSignalsRef = ref(this.db, `rooms/${this.currentRoom}/signals/${targetPeerId}`);
       await push(targetSignalsRef, {
@@ -263,6 +246,11 @@ export class FirebaseSignalingClient {
   }
 
   async leaveRoom() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+
     if (this.currentRoom && this.db) {
       try {
         const myPeerRef = ref(this.db, `rooms/${this.currentRoom}/peers/${this.peerId}`);

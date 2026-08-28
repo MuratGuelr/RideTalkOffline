@@ -2,20 +2,25 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import RoomCreate from './components/RoomCreate.jsx';
 import RoomJoin from './components/RoomJoin.jsx';
 import ActiveRoom from './components/ActiveRoom.jsx';
-import OfflineQRHandshakeModal from './components/OfflineQRHandshakeModal.jsx';
 import ServerSettingsModal from './components/ServerSettingsModal.jsx';
 import { SignalingClient } from './lib/signaling.js';
 import { FirebaseSignalingClient, isFirebaseConfigured } from './lib/firebaseSignaling.js';
-import { LocalSignalingClient } from './lib/localSignaling.js';
 import { MeshManager } from './lib/meshManager.js';
 import {
-  announceJoin, announceDisconnect, announceReconnect,
-  playAlertTone, speakText, playMuteSound, playUnmuteSound,
-  playSomeoneLeftSound, preloadAllSounds, getAudioContext,
+  announceJoin,
+  announceDisconnect,
+  announceReconnect,
+  playAlertTone,
+  speakText,
+  playMuteSound,
+  playUnmuteSound,
+  playSomeoneLeftSound,
+  preloadAllSounds,
+  getAudioContext,
 } from './lib/announcer.js';
 import { keepScreenAwake, releaseScreenAwake, onWakeLockStatusChange } from './lib/wakeLock.js';
 import { watchNetworkChanges } from './lib/networkWatcher.js';
-import { Radio, PlusCircle, LogIn, Shield, WifiOff, Volume2, Settings, Wifi, Zap } from 'lucide-react';
+import { Radio, PlusCircle, LogIn, Shield, Wifi, Volume2, Settings, Zap, User } from 'lucide-react';
 import './App.css';
 
 export default function App() {
@@ -25,6 +30,13 @@ export default function App() {
   const [error, setError] = useState(null);
   const [initialRoomCode, setInitialRoomCode] = useState('');
   const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
+
+  const [driverName, setDriverName] = useState(() => {
+    return localStorage.getItem('ridetalk_name') || 'Sürücü ' + Math.floor(10 + Math.random() * 90);
+  });
+  const [autoConnectOnLoad, setAutoConnectOnLoad] = useState(() => {
+    return localStorage.getItem('ridetalk_autoconnect') === 'true';
+  });
 
   const [peers, setPeers] = useState({});
   const [localVolume, setLocalVolume] = useState(0);
@@ -48,10 +60,37 @@ export default function App() {
     toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 4000);
   }, []);
 
+  const handleLeaveRoomDirect = useCallback(() => {
+    if (meshRef.current) {
+      meshRef.current.destroy();
+      meshRef.current = null;
+    }
+    if (signalingRef.current) {
+      try {
+        if (signalingRef.current.leaveRoom) signalingRef.current.leaveRoom();
+        signalingRef.current.disconnect();
+      } catch (_) {}
+      signalingRef.current = null;
+    }
+    if (unwatchNetworkRef.current) {
+      unwatchNetworkRef.current();
+      unwatchNetworkRef.current = null;
+    }
+    releaseScreenAwake();
+    setPeers({});
+    setRoomData(null);
+    setView('home');
+    showToast('İnterkomdan ayrıldınız');
+  }, [showToast]);
+
   // Geri tuşu koruması
   useEffect(() => {
     if (view === 'active') {
-      const beforeUnload = (e) => { e.preventDefault(); e.returnValue = ''; return ''; };
+      const beforeUnload = (e) => {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      };
       window.addEventListener('beforeunload', beforeUnload);
       window.history.pushState({ ridetalk: 'active' }, '');
       const popState = () => {
@@ -59,24 +98,36 @@ export default function App() {
         else window.history.pushState({ ridetalk: 'active' }, '');
       };
       window.addEventListener('popstate', popState);
-      return () => { window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('popstate', popState); };
+      return () => {
+        window.removeEventListener('beforeunload', beforeUnload);
+        window.removeEventListener('popstate', popState);
+      };
     }
-  }, [view]);
+  }, [view, handleLeaveRoomDirect]);
 
+  // URL'den oda kodu varsa al
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('room');
-    if (code) { setInitialRoomCode(code.toUpperCase()); setView('join'); }
+    if (code) {
+      setInitialRoomCode(code.toUpperCase());
+      setView('join');
+    }
   }, []);
 
-  useEffect(() => { onWakeLockStatusChange((a) => setIsWakeLockActive(a)); }, []);
+  useEffect(() => {
+    onWakeLockStatusChange((a) => setIsWakeLockActive(a));
+  }, []);
 
   useEffect(() => {
     const on = () => setIsOnline(true);
     const off = () => setIsOnline(false);
     window.addEventListener('online', on);
     window.addEventListener('offline', off);
-    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
   }, []);
 
   const ensureAudioUnlocked = () => {
@@ -100,211 +151,175 @@ export default function App() {
   }, []);
 
   // =====================================================
-  //  MESH OTURUMU BAŞLAT (her mod için ortak)
+  //  MESH VE SES YÖNETİCİSİ BAŞLAT
   // =====================================================
-  const startMeshWithSignaling = useCallback(async (currentRoomData, signalingClient, existingPeers = []) => {
-    await keepScreenAwake();
+  const startMeshSession = useCallback(
+    async (currentRoomData, signaling, existingPeers = []) => {
+      await keepScreenAwake();
 
-    const mesh = new MeshManager({
-      myPeerId: currentRoomData?.peerId || '',
-      sendSignal: (targetPeerId, data) => signalingClient.sendSignal(targetPeerId, data),
-      onPeerStateChange: (peerId, info) => {
-        setPeers((prev) => ({ ...prev, [peerId]: { name: info.name, state: info.state, isMuted: info.isMuted, stats: info.stats } }));
-      },
-      onPeerVolumeChange: (peerId, level, isSpeaking) => {
-        setPeerVolumes((prev) => ({ ...prev, [peerId]: { level, isSpeaking } }));
-      },
-      onLocalVolumeChange: (level, isSpeaking) => { setLocalVolume(level); setLocalIsSpeaking(isSpeaking); },
-      onPeerDisconnect: (peerId) => { playSomeoneLeftSound(); announceDisconnect(peerId); },
-      onPeerReconnect: (peerId) => { announceReconnect(peerId); showToast('Bağlantı yeniden kuruldu!'); },
-      onHornReceived: (_, name) => { playAlertTone('horn'); showToast(`⚠️ ${name || 'Sürücü'} ikaz tonu gönderdi!`); },
-      onStatsUpdate: (s) => setStats(s),
-      onReconnectionFailed: () => {},
-    });
+      const mesh = new MeshManager({
+        myPeerId: currentRoomData?.peerId || '',
+        sendSignal: (targetPeerId, data) => signaling.sendSignal(targetPeerId, data),
+        onPeerStateChange: (peerId, info) => {
+          setPeers((prev) => ({
+            ...prev,
+            [peerId]: { name: info.name, state: info.state, isMuted: info.isMuted, stats: info.stats },
+          }));
+        },
+        onPeerVolumeChange: (peerId, level, isSpeaking) => {
+          setPeerVolumes((prev) => ({ ...prev, [peerId]: { level, isSpeaking } }));
+        },
+        onLocalVolumeChange: (level, isSpeaking) => {
+          setLocalVolume(level);
+          setLocalIsSpeaking(isSpeaking);
+        },
+        onPeerDisconnect: (peerId) => {
+          playSomeoneLeftSound();
+          announceDisconnect(peerId);
+        },
+        onPeerReconnect: (peerId) => {
+          announceReconnect(peerId);
+          showToast('Bağlantı yeniden kuruldu!');
+        },
+        onHornReceived: (_, name) => {
+          playAlertTone('horn');
+          showToast(`⚠️ ${name || 'Sürücü'} ikaz tonu gönderdi!`);
+        },
+        onStatsUpdate: (s) => setStats(s),
+        onReconnectionFailed: () => {},
+      });
 
-    meshRef.current = mesh;
-    await mesh.init();
+      meshRef.current = mesh;
+      await mesh.init();
 
-    if (existingPeers.length > 0) {
-      for (const p of existingPeers) await mesh.connectToPeer(p.id, p.name);
-    }
-
-    // Ağ değişim izleyicisi
-    if (unwatchNetworkRef.current) unwatchNetworkRef.current();
-    unwatchNetworkRef.current = watchNetworkChanges((reason) => {
-      if (meshRef.current) {
-        showToast('Ağ değişimi algılandı, yeniden bağlanılıyor...');
-        meshRef.current.restartIceForAllPeers();
+      // Odadaki mevcut kişilere teklif gönder
+      if (existingPeers.length > 0) {
+        for (const p of existingPeers) {
+          await mesh.connectToPeer(p.id, p.name);
+        }
       }
-    });
-  }, [showToast]);
+
+      // Ağ değişim izleyicisini başlat
+      if (unwatchNetworkRef.current) unwatchNetworkRef.current();
+      unwatchNetworkRef.current = watchNetworkChanges(() => {
+        if (meshRef.current) {
+          showToast('Ağ değişimi algılandı, ses kanalları güncelleniyor...');
+          meshRef.current.restartIceForAllPeers();
+        }
+      });
+    },
+    [showToast]
+  );
 
   // =====================================================
-  //  ⭐ HOTSPOT İNTERKOM — Tek Tuşla Otomatik Bağlan
-  //  Kod yok, QR yok. Aynı ağdaki herkes otomatik eşleşir.
+  //  ⭐ TEK TUŞLA OTOMATİK BAĞLAN (HERKES AYNI ODAYA)
   // =====================================================
-  const handleHotspotIntercom = async () => {
-    try {
-      setError(null);
-      setIsConnecting(true);
-      ensureAudioUnlocked();
+  const handleAutoConnect = useCallback(
+    async (customRoom = 'MOTO-RIDE') => {
+      try {
+        setError(null);
+        setIsConnecting(true);
+        ensureAudioUnlocked();
 
-      const savedName = localStorage.getItem('ridetalk_name') || '';
-      const name = savedName || prompt('Sürücü adınız:', 'Sürücü') || 'Sürücü';
-      localStorage.setItem('ridetalk_name', name);
+        const name = (driverName || 'Sürücü').trim();
+        localStorage.setItem('ridetalk_name', name);
 
-      // Yerel sinyal sunucusuna bağlan
-      const local = new LocalSignalingClient();
-      await local.connect();
-      signalingRef.current = local;
+        const signaling = getSignalingClient();
+        await signaling.connect();
 
-      // Sinyal olaylarını dinle
-      local.on('joined', async (msg) => {
-        console.log('[App] Hotspot odasına katıldı:', msg);
-        const rd = { roomCode: 'HOTSPOT', peerId: msg.peerId, name: msg.name };
-        setRoomData(rd);
-
-        const existingPeers = msg.existingPeers || [];
-        const ip = {};
-        existingPeers.forEach((p) => {
-          ip[p.id] = { name: p.name, state: 'connecting', isMuted: false, stats: null };
-        });
-        setPeers(ip);
-
-        try {
-          await startMeshWithSignaling(rd, local, existingPeers);
-          setIsConnecting(false);
-          setView('active');
-
-          if (existingPeers.length > 0) {
-            speakText(`Hotspot interkoma bağlandı. ${existingPeers.length} sürücü mevcut.`);
-          } else {
-            speakText('Hotspot interkom aktif. Diğer sürücüler bekleniyor.');
+        // Sinyal olaylarını dinle
+        signaling.on('peer-joined', async (msg) => {
+          announceJoin(msg.peerId, msg.name);
+          showToast(`${msg.name} telsize bağlandı`);
+          setPeers((prev) => ({
+            ...prev,
+            [msg.peerId]: { name: msg.name, state: 'connecting', isMuted: false, stats: null },
+          }));
+          if (meshRef.current) {
+            await meshRef.current.connectToPeer(msg.peerId, msg.name);
           }
-        } catch (e) {
-          setError(e.message);
-          setIsConnecting(false);
-        }
-      });
+        });
 
-      local.on('peer-joined', (msg) => {
-        announceJoin(msg.peerId, msg.name);
-        showToast(`${msg.name} bağlandı!`);
-        setPeers((prev) => ({
-          ...prev,
-          [msg.peerId]: { name: msg.name, state: 'connecting', isMuted: false, stats: null },
-        }));
-        // Yeni peer ile WebRTC bağlantısı kur
-        if (meshRef.current) {
-          meshRef.current.connectToPeer(msg.peerId, msg.name);
-        }
-      });
+        signaling.on('signal', async (msg) => {
+          if (meshRef.current) {
+            await meshRef.current.handleSignal(msg.fromPeerId, msg.data, msg.name);
+          }
+        });
 
-      local.on('signal', async (msg) => {
-        if (meshRef.current) {
-          await meshRef.current.handleSignal(msg.fromPeerId, msg.data);
-        }
-      });
+        signaling.on('peer-left', (msg) => {
+          playSomeoneLeftSound();
+          announceDisconnect(msg.peerId);
+          showToast(`${msg.name || 'Sürücü'} ayrıldı`);
+          if (meshRef.current) meshRef.current.removePeer(msg.peerId);
+          setPeers((prev) => {
+            const next = { ...prev };
+            delete next[msg.peerId];
+            return next;
+          });
+        });
 
-      local.on('peer-left', (msg) => {
-        playSomeoneLeftSound();
-        announceDisconnect(msg.peerId);
-        showToast(`${msg.name || 'Sürücü'} ayrıldı`);
-        if (meshRef.current) meshRef.current.removePeer(msg.peerId);
-        setPeers((prev) => { const n = { ...prev }; delete n[msg.peerId]; return n; });
-      });
+        signaling.on('joined', async (msg) => {
+          const rd = { roomCode: msg.roomCode || customRoom, peerId: msg.peerId, name: msg.name };
+          setRoomData(rd);
 
-      // Odaya katıl
-      local.join(name);
+          const initialPeers = {};
+          (msg.existingPeers || []).forEach((p) => {
+            initialPeers[p.id] = { name: p.name, state: 'connecting', isMuted: false, stats: null };
+          });
+          setPeers(initialPeers);
 
-    } catch (err) {
-      console.error('[App] Hotspot interkom hatası:', err);
-      setError('Yerel sinyal sunucusuna bağlanılamadı. Vite dev sunucusu çalışıyor mu?');
-      setIsConnecting(false);
+          try {
+            await startMeshSession(rd, signaling, msg.existingPeers || []);
+            setIsConnecting(false);
+            setView('active');
+            speakText('Telsiz aktif. Konuşabilirsiniz.');
+          } catch (e) {
+            setError(e.message);
+            setIsConnecting(false);
+          }
+        });
+
+        // Firebase grubuna otomatik katıl
+        await signaling.autoJoinGroup(customRoom, name);
+      } catch (err) {
+        console.error('[App] Otomatik bağlantı hatası:', err);
+        setError(err.message || 'Bağlantı kurulamadı');
+        setIsConnecting(false);
+      }
+    },
+    [driverName, getSignalingClient, showToast, startMeshSession]
+  );
+
+  // Açılışta otomatik bağlanma açıksa ve ana sayfadaysa
+  useEffect(() => {
+    if (autoConnectOnLoad && view === 'home' && !isConnecting && !roomData) {
+      const timer = setTimeout(() => {
+        handleAutoConnect('MOTO-RIDE');
+      }, 500);
+      return () => clearTimeout(timer);
     }
-  };
+  }, [autoConnectOnLoad, view, isConnecting, roomData, handleAutoConnect]);
 
-  // =====================================================
-  //  İNTERNET ÜZERİNDEN ODA (Firebase/WebSocket)
-  // =====================================================
-  const bindSignalingEvents = useCallback((signaling) => {
-    signaling.on('peer-joined', (msg) => {
-      announceJoin(msg.peerId, msg.name);
-      showToast(`${msg.name} odaya katıldı`);
-      setPeers((prev) => ({ ...prev, [msg.peerId]: { name: msg.name, state: 'connecting', isMuted: false, stats: null } }));
-    });
-    signaling.on('signal', async (msg) => { if (meshRef.current) await meshRef.current.handleSignal(msg.fromPeerId, msg.data); });
-    signaling.on('peer-left', (msg) => {
-      playSomeoneLeftSound(); announceDisconnect(msg.peerId); showToast(`${msg.name || 'Sürücü'} ayrıldı`);
-      if (meshRef.current) meshRef.current.removePeer(msg.peerId);
-      setPeers((prev) => { const n = { ...prev }; delete n[msg.peerId]; return n; });
-    });
-    signaling.on('error', (err) => { setError(err.message || 'Hata'); setIsConnecting(false); });
-  }, [showToast]);
-
-  const handleStartRoom = async (name) => {
-    try {
-      setError(null); setIsConnecting(true); ensureAudioUnlocked();
-      const signaling = getSignalingClient();
-      await signaling.connect();
-      bindSignalingEvents(signaling);
-      signaling.on('room-created', async (msg) => {
-        const rd = { roomCode: msg.roomCode, peerId: msg.peerId, name: msg.name };
-        setRoomData(rd); setIsConnecting(false);
-        try { await startMeshWithSignaling(rd, signaling, []); setView('active'); speakText('İnterkom odası açıldı.'); }
-        catch (e) { setError(e.message); }
-      });
-      signaling.createRoom(name);
-    } catch (err) { setError(err.message); setIsConnecting(false); }
-  };
-
-  const handleJoinRoom = async (code, name) => {
-    try {
-      setError(null); setIsConnecting(true); ensureAudioUnlocked();
-      const signaling = getSignalingClient();
-      await signaling.connect();
-      bindSignalingEvents(signaling);
-      signaling.on('joined', async (msg) => {
-        const rd = { roomCode: msg.roomCode, peerId: msg.peerId, name: msg.name };
-        setRoomData(rd);
-        const ip = {};
-        (msg.existingPeers || []).forEach((p) => { ip[p.id] = { name: p.name, state: 'connecting', isMuted: false, stats: null }; });
-        setPeers(ip);
-        try { await startMeshWithSignaling(rd, signaling, msg.existingPeers || []); setIsConnecting(false); setView('active'); speakText(`${msg.roomCode} odasına bağlanıldı.`); }
-        catch (e) { setError(e.message); setIsConnecting(false); }
-      });
-      signaling.joinRoom(code, name);
-    } catch (err) { setError(err.message); setIsConnecting(false); }
-  };
-
-  // =====================================================
-  //  KONTROLLER
-  // =====================================================
   const handleToggleMute = () => {
-    const next = !isMuted; setIsMuted(next);
+    const next = !isMuted;
+    setIsMuted(next);
     if (meshRef.current) meshRef.current.setMute(next);
-    next ? playMuteSound() : playUnmuteSound();
+    if (next) {
+      playMuteSound();
+    } else {
+      playUnmuteSound();
+    }
     showToast(next ? 'Mikrofon Kapatıldı' : 'Mikrofon Açık');
   };
 
   const handleSendHorn = () => {
-    if (meshRef.current) { meshRef.current.sendHornAlert(); playAlertTone('horn'); showToast('İkaz tonu gönderildi ⚠️'); }
-  };
-
-  const handleLeaveRoomDirect = () => {
-    if (meshRef.current) { meshRef.current.destroy(); meshRef.current = null; }
-    if (signalingRef.current) {
-      try { signalingRef.current.leaveRoom && signalingRef.current.leaveRoom(); } catch (_) {}
-      signalingRef.current.disconnect();
-      signalingRef.current = null;
+    if (meshRef.current) {
+      meshRef.current.sendHornAlert();
+      playAlertTone('horn');
+      showToast('İkaz tonu gönderildi ⚠️');
     }
-    if (unwatchNetworkRef.current) { unwatchNetworkRef.current(); unwatchNetworkRef.current = null; }
-    releaseScreenAwake(); setPeers({}); setRoomData(null); setView('home'); showToast('İnterkomdan ayrıldınız');
   };
 
-  // =====================================================
-  //  RENDER
-  // =====================================================
   return (
     <div className="app-container" onClick={ensureAudioUnlocked}>
       <div className="ambient-glow cyan-glow"></div>
@@ -313,84 +328,257 @@ export default function App() {
       {view === 'home' && (
         <div className="lobby-wrapper animate-fade-in">
           <header className="lobby-brand">
-            <div className="brand-logo-wrap"><Radio size={36} className="brand-icon" /><div className="brand-pulse-ring"></div></div>
+            <div className="brand-logo-wrap">
+              <Radio size={36} className="brand-icon" />
+              <div className="brand-pulse-ring"></div>
+            </div>
             <h1 className="brand-title">RideTalk</h1>
-            <p className="brand-tagline">Motosiklet İçin Tam Mesh & Hotspot İnterkomu</p>
+            <p className="brand-tagline">Motosiklet İçin Otomatik Full-Mesh İnterkom</p>
           </header>
 
           <div className="feature-pill-row">
-            <div className="feat-pill"><Shield size={14} className="text-emerald" /><span>PWA Çevrimdışı</span></div>
-            <div className="feat-pill"><Wifi size={14} className="text-orange" /><span>Hotspot Otomatik</span></div>
-            <div className="feat-pill"><Volume2 size={14} className="text-cyan" /><span>DSP Gürültü Filtresi</span></div>
+            <div className="feat-pill">
+              <Shield size={14} className="text-emerald" />
+              <span>Vercel + Firebase</span>
+            </div>
+            <div className="feat-pill">
+              <Wifi size={14} className="text-orange" />
+              <span>Otomatik Eşleşme</span>
+            </div>
+            <div className="feat-pill">
+              <Volume2 size={14} className="text-cyan" />
+              <span>DSP Filtresi</span>
+            </div>
           </div>
 
-          {/* ⭐ ANA BUTON: Hotspot İnterkom */}
+          {/* Sürücü Adı Girişi */}
+          <div
+            className="driver-name-card"
+            style={{
+              background: 'rgba(255, 255, 255, 0.05)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: '16px',
+              padding: '14px 18px',
+              marginBottom: '14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+            }}
+          >
+            <label style={{ fontSize: '0.8rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <User size={14} className="text-neon" />
+              <span>Kask / Sürücü Adınız:</span>
+            </label>
+            <input
+              type="text"
+              className="input-text"
+              value={driverName}
+              onChange={(e) => {
+                setDriverName(e.target.value);
+                localStorage.setItem('ridetalk_name', e.target.value);
+              }}
+              placeholder="Örn: Ahmet, Motorcu-1"
+              maxLength={20}
+              style={{
+                background: 'rgba(0,0,0,0.4)',
+                border: '1px solid rgba(0, 229, 255, 0.3)',
+                padding: '10px 14px',
+                borderRadius: '10px',
+                color: '#fff',
+                fontSize: '1rem',
+                fontWeight: '700',
+              }}
+            />
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', cursor: 'pointer', fontSize: '0.78rem', color: '#cbd5e1' }}>
+              <input
+                type="checkbox"
+                checked={autoConnectOnLoad}
+                onChange={(e) => {
+                  setAutoConnectOnLoad(e.target.checked);
+                  localStorage.setItem('ridetalk_autoconnect', e.target.checked ? 'true' : 'false');
+                }}
+                style={{ width: '16px', height: '16px', accentColor: '#00e5ff' }}
+              />
+              <span>Sayfa açıldığında otomatik bağlan (0 tık)</span>
+            </label>
+          </div>
+
+          {/* ⭐ TEK TUŞLA OTOMATİK BAĞLAN BUTONU ⭐ */}
           <div className="lobby-cards-grid">
             <button
               type="button"
               className="lobby-action-card card-hotspot-main"
-              onClick={handleHotspotIntercom}
+              onClick={() => handleAutoConnect('MOTO-RIDE')}
               disabled={isConnecting}
               style={{
                 gridColumn: '1 / -1',
-                background: 'linear-gradient(135deg, rgba(255,107,0,0.2) 0%, rgba(0,229,255,0.15) 100%)',
-                border: '2px solid rgba(255,107,0,0.6)',
-                minHeight: '100px',
+                background: 'linear-gradient(135deg, rgba(0, 229, 255, 0.2) 0%, rgba(255, 107, 0, 0.25) 100%)',
+                border: '2px solid #00e5ff',
+                boxShadow: '0 0 25px rgba(0, 229, 255, 0.35)',
+                minHeight: '110px',
+                padding: '18px',
               }}
             >
-              <div className="card-action-icon" style={{ color: '#ff6b00' }}>
-                {isConnecting ? <Zap size={36} className="animate-pulse" /> : <Wifi size={36} />}
+              <div className="card-action-icon" style={{ color: '#00e5ff' }}>
+                {isConnecting ? <Zap size={40} className="animate-pulse text-orange" /> : <Radio size={40} />}
               </div>
               <div className="card-action-text">
-                <h3 style={{ color: '#ff6b00', fontSize: '1.15rem' }}>
-                  {isConnecting ? 'Bağlanılıyor...' : '🔥 Hotspot İnterkom — Tek Tuş'}
+                <h3 style={{ color: '#00e5ff', fontSize: '1.25rem', fontWeight: '900', letterSpacing: '0.5px' }}>
+                  {isConnecting ? 'Telsize Bağlanılıyor...' : '🚀 TELSİZE BAĞLAN (OTOMATİK)'}
                 </h3>
-                <p>Hotspot aç, herkes bağlansın, otomatik interkom başlasın. Kod yok, QR yok!</p>
+                <p style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>
+                  Hotspot veya internetteki tüm sürücülerle anında aynı odaya girip konuşun. Kod yok, QR yok!
+                </p>
               </div>
             </button>
 
-            {/* İnternet Üzerinden Oda (Opsiyonel) */}
-            <button type="button" className="lobby-action-card card-create" onClick={() => { setError(null); setRoomData(null); setView('create'); }}>
-              <div className="card-action-icon"><PlusCircle size={28} /></div>
-              <div className="card-action-text"><h3>İnternet Odası</h3><p>İnternet üzerinden kodlu oda</p></div>
+            {/* Özel Oda Seçenekleri (İsteğe Bağlı) */}
+            <button
+              type="button"
+              className="lobby-action-card card-create"
+              onClick={() => {
+                setError(null);
+                setRoomData(null);
+                setView('create');
+              }}
+            >
+              <div className="card-action-icon">
+                <PlusCircle size={26} />
+              </div>
+              <div className="card-action-text">
+                <h3>Özel Oda Aç</h3>
+                <p>Farklı bir oda koduyla grup kur</p>
+              </div>
             </button>
-            <button type="button" className="lobby-action-card card-join" onClick={() => { setError(null); setView('join'); }}>
-              <div className="card-action-icon"><LogIn size={28} /></div>
-              <div className="card-action-text"><h3>Odaya Katıl</h3><p>6 haneli kod ile katıl</p></div>
+
+            <button
+              type="button"
+              className="lobby-action-card card-join"
+              onClick={() => {
+                setError(null);
+                setView('join');
+              }}
+            >
+              <div className="card-action-icon">
+                <LogIn size={26} />
+              </div>
+              <div className="card-action-text">
+                <h3>Koda Göre Katıl</h3>
+                <p>Belirli bir oda koduna gir</p>
+              </div>
             </button>
           </div>
 
           {error && (
-            <div className="error-banner" style={{ margin: '12px 0', padding: '12px', borderRadius: '12px', background: 'rgba(255,23,68,0.15)', border: '1px solid rgba(255,23,68,0.4)', color: '#ff8a80', fontSize: '0.85rem', textAlign: 'center' }}>
+            <div
+              className="error-banner"
+              style={{
+                margin: '12px 0',
+                padding: '12px',
+                borderRadius: '12px',
+                background: 'rgba(255,23,68,0.15)',
+                border: '1px solid rgba(255,23,68,0.4)',
+                color: '#ff8a80',
+                fontSize: '0.85rem',
+                textAlign: 'center',
+              }}
+            >
               {error}
             </div>
           )}
 
           <footer className="lobby-footer" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span>Sürüş sırasında telefonunuzu gidon tutucusunda açık tutun.</span>
-            <button type="button" className="btn-text-settings" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#64748b', background: 'rgba(255,255,255,0.04)', padding: '6px 12px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,0.06)' }} onClick={() => setIsServerSettingsOpen(true)}>
-              <Settings size={13} /><span>Sunucu Ayarı</span>
+            <button
+              type="button"
+              className="btn-text-settings"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.75rem',
+                color: '#64748b',
+                background: 'rgba(255,255,255,0.04)',
+                padding: '6px 12px',
+                borderRadius: '9999px',
+                border: '1px solid rgba(255,255,255,0.06)'
+              }}
+              onClick={() => setIsServerSettingsOpen(true)}
+            >
+              <Settings size={13} />
+              <span>Ayarlar</span>
             </button>
           </footer>
         </div>
       )}
 
-      <ServerSettingsModal isOpen={isServerSettingsOpen} onClose={() => setIsServerSettingsOpen(false)} onSave={() => { if (signalingRef.current) { signalingRef.current.disconnect(); signalingRef.current = null; } showToast('Sunucu güncellendi'); }} />
+      <ServerSettingsModal
+        isOpen={isServerSettingsOpen}
+        onClose={() => setIsServerSettingsOpen(false)}
+        onSave={() => {
+          if (signalingRef.current) {
+            signalingRef.current.disconnect();
+            signalingRef.current = null;
+          }
+          showToast('Ayarlar güncellendi');
+        }}
+      />
 
-      {view === 'create' && <div className="view-wrapper animate-fade-in"><RoomCreate onStartRoom={handleStartRoom} isConnecting={isConnecting} error={error} roomData={roomData} onEnterActiveRoom={() => setView('active')} onBack={() => setView('home')} /></div>}
-      {view === 'join' && <div className="view-wrapper animate-fade-in"><RoomJoin initialRoomCode={initialRoomCode} onJoinRoom={handleJoinRoom} isConnecting={isConnecting} error={error} onBack={() => setView('home')} /></div>}
+      {view === 'create' && (
+        <div className="view-wrapper animate-fade-in">
+          <RoomCreate
+            onStartRoom={() => handleAutoConnect('MOTO-RIDE')}
+            isConnecting={isConnecting}
+            error={error}
+            roomData={roomData}
+            onEnterActiveRoom={() => setView('active')}
+            onBack={() => setView('home')}
+          />
+        </div>
+      )}
+
+      {view === 'join' && (
+        <div className="view-wrapper animate-fade-in">
+          <RoomJoin
+            initialRoomCode={initialRoomCode}
+            onJoinRoom={(code) => handleAutoConnect(code)}
+            isConnecting={isConnecting}
+            error={error}
+            onBack={() => setView('home')}
+          />
+        </div>
+      )}
 
       {view === 'active' && roomData && (
         <ActiveRoom
-          roomCode={roomData.roomCode} selfName={roomData.name} peers={peers}
-          localVolume={localVolume} localIsSpeaking={localIsSpeaking} peerVolumes={peerVolumes}
-          isMuted={isMuted} onToggleMute={handleToggleMute} onSendHorn={handleSendHorn}
-          onLeaveRoom={handleLeaveRoomDirect} stats={stats} isWakeLockActive={isWakeLockActive}
-          isOnline={isOnline} toastMessage={toastMessage} meshManager={meshRef.current}
+          roomCode={roomData.roomCode}
+          selfName={roomData.name}
+          peers={peers}
+          localVolume={localVolume}
+          localIsSpeaking={localIsSpeaking}
+          peerVolumes={peerVolumes}
+          isMuted={isMuted}
+          onToggleMute={handleToggleMute}
+          onSendHorn={handleSendHorn}
+          onLeaveRoom={handleLeaveRoomDirect}
+          stats={stats}
+          isWakeLockActive={isWakeLockActive}
+          isOnline={isOnline}
+          toastMessage={toastMessage}
+          meshManager={meshRef.current}
           showReconnectQRPrompt={false}
           onOfflineHandshakeSuccess={(partnerName) => {
             showToast(`${partnerName} ile ses bağlantısı kuruldu!`);
-            setPeers((prev) => ({ ...prev, offline_peer: { name: partnerName || 'Sürücü', state: 'connected', isMuted: false, stats: { isLocal: true, rtt: 10 } } }));
+            setPeers((prev) => ({
+              ...prev,
+              offline_peer: {
+                name: partnerName || 'Sürücü',
+                state: 'connected',
+                isMuted: false,
+                stats: { isLocal: true, rtt: 10 },
+              },
+            }));
           }}
         />
       )}
