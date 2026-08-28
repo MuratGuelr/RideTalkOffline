@@ -81,7 +81,7 @@ wss.on('connection', (ws, req) => {
           currentRoom = targetCode;
           const peerName = (msg.name || `Sürücü ${room.size + 1}`).trim();
 
-          // Send current peers to the joining peer
+          // Odadaki mevcut kişileri yeni katılana gönder
           const existingPeers = Array.from(room.values()).map((p) => ({
             id: p.id,
             name: p.name,
@@ -97,7 +97,7 @@ wss.on('connection', (ws, req) => {
             })
           );
 
-          // Broadcast to everyone else in the room that a new peer joined
+          // Odadaki diğer herkese yeni katılanı bildir
           room.forEach((p) => {
             if (p.ws.readyState === WebSocket.OPEN) {
               p.ws.send(
@@ -110,7 +110,7 @@ wss.on('connection', (ws, req) => {
             }
           });
 
-          // Add joining peer to the room map
+          // Yeni katılanı oda listesine ekle
           room.set(peerId, {
             id: peerId,
             ws,
@@ -122,7 +122,7 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
-        // Direct signal forwarding for WebRTC SDP offers/answers and ICE candidates
+        // WebRTC SDP ve ICE sinyallerini hedef peer'e ilet
         case 'signal': {
           if (!currentRoom) return;
           const room = rooms.get(currentRoom);
@@ -200,7 +200,6 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// Periodic heartbeat to prevent mobile cellular/WiFi connection dropouts
 const heartbeatInterval = setInterval(() => {
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) {

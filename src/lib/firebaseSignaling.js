@@ -48,6 +48,7 @@ export class FirebaseSignalingClient {
     this.currentRoom = null;
     this.listeners = new Map();
     this.activeUnsubscribers = [];
+    this.knownPeers = new Set();
   }
 
   on(event, callback) {
@@ -105,6 +106,8 @@ export class FirebaseSignalingClient {
       const peerName = (name || 'Lider Sürücü').trim();
       const code = generateRoomCode();
       this.currentRoom = code;
+      this.knownPeers.clear();
+      this.knownPeers.add(this.peerId);
 
       const peerRef = ref(this.db, `rooms/${code}/peers/${this.peerId}`);
 
@@ -123,7 +126,7 @@ export class FirebaseSignalingClient {
       this.listenToRoomSignals(code);
       this.listenToPeers(code);
 
-      console.log(`[FirebaseSignaling] Oda Oluşturuldu: ${code} | Kurucu: ${peerName}`);
+      console.log(`[FirebaseSignaling] Oda Oluşturuldu: ${code} | Kurucu: ${peerName} (${this.peerId})`);
 
       this.emit('room-created', {
         type: 'room-created',
@@ -144,6 +147,8 @@ export class FirebaseSignalingClient {
       const targetCode = (roomCode || '').toUpperCase().trim();
       const peerName = (name || 'Sürücü').trim();
       this.currentRoom = targetCode;
+      this.knownPeers.clear();
+      this.knownPeers.add(this.peerId);
 
       const roomPeersRef = ref(this.db, `rooms/${targetCode}/peers`);
       const snapshot = await get(roomPeersRef);
@@ -154,10 +159,12 @@ export class FirebaseSignalingClient {
       }
 
       const existingPeersObj = snapshot.val() || {};
-      const existingPeers = Object.values(existingPeersObj).map((p) => ({
-        id: p.id,
-        name: p.name,
-      }));
+      const existingPeers = Object.values(existingPeersObj)
+        .filter((p) => p && p.id && p.id !== this.peerId)
+        .map((p) => {
+          this.knownPeers.add(p.id);
+          return { id: p.id, name: p.name };
+        });
 
       const myPeerRef = ref(this.db, `rooms/${targetCode}/peers/${this.peerId}`);
       await set(myPeerRef, {
@@ -167,10 +174,9 @@ export class FirebaseSignalingClient {
         joinedAt: Date.now(),
       });
 
-      // Bağlantı koparsa otomatik silinsin
       onDisconnect(myPeerRef).remove();
 
-      // Sinyal dinleyicisi
+      // Sinyal ve katılımcı dinleyicilerini başlat
       this.listenToRoomSignals(targetCode);
       this.listenToPeers(targetCode);
 
@@ -182,7 +188,7 @@ export class FirebaseSignalingClient {
         existingPeers,
       });
 
-      console.log(`[FirebaseSignaling] Odaya Katılındı: ${targetCode} | İsim: ${peerName}`);
+      console.log(`[FirebaseSignaling] Odaya Katılındı: ${targetCode} | İsim: ${peerName} | Mevcut Kişi: ${existingPeers.length}`);
     } catch (err) {
       console.error('[FirebaseSignaling] Odaya katılım hatası:', err);
       this.emit('error', { message: `Odaya katılırken hata oluştu: ${err.message}` });
@@ -194,7 +200,9 @@ export class FirebaseSignalingClient {
 
     const unsubAdded = onChildAdded(peersRef, (snapshot) => {
       const p = snapshot.val();
-      if (p && p.id !== this.peerId) {
+      if (p && p.id && p.id !== this.peerId && !this.knownPeers.has(p.id)) {
+        this.knownPeers.add(p.id);
+        console.log(`[FirebaseSignaling] Yeni katılımcı algılandı: ${p.name} (${p.id})`);
         this.emit('peer-joined', {
           type: 'peer-joined',
           peerId: p.id,
@@ -205,7 +213,9 @@ export class FirebaseSignalingClient {
 
     const unsubRemoved = onChildRemoved(peersRef, (snapshot) => {
       const p = snapshot.val();
-      if (p && p.id !== this.peerId) {
+      if (p && p.id && p.id !== this.peerId) {
+        this.knownPeers.delete(p.id);
+        console.log(`[FirebaseSignaling] Katılımcı ayrıldı: ${p.name} (${p.id})`);
         this.emit('peer-left', {
           type: 'peer-left',
           peerId: p.id,
@@ -222,12 +232,13 @@ export class FirebaseSignalingClient {
 
     const unsubSignal = onChildAdded(mySignalsRef, (snapshot) => {
       const signalData = snapshot.val();
-      if (signalData && signalData.fromPeerId) {
+      if (signalData && signalData.fromPeerId && signalData.data) {
         this.emit('signal', {
           type: 'signal',
           fromPeerId: signalData.fromPeerId,
           data: signalData.data,
         });
+        // Sinyal işlendikten sonra veritabanından temizle
         remove(snapshot.ref).catch(() => {});
       }
     });
@@ -265,6 +276,7 @@ export class FirebaseSignalingClient {
       if (typeof unsub === 'function') unsub();
     });
     this.activeUnsubscribers = [];
+    this.knownPeers.clear();
     this.currentRoom = null;
   }
 

@@ -8,7 +8,9 @@ import { registerPeerName, unregisterPeerName } from './announcer.js';
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
 ];
 
 export class MeshManager {
@@ -22,7 +24,7 @@ export class MeshManager {
     this.onHornReceived = options.onHornReceived || (() => {});
     this.onStatsUpdate = options.onStatsUpdate || (() => {});
 
-    // peerId -> { pc, dataChannel, audioEl, stream, levelMeter, name, state, disconnectTimeout, isMuted, stats }
+    // peerId -> { pc, dataChannel, audioEl, stream, levelMeter, name, state, disconnectTimeout, isMuted, stats, pendingCandidates }
     this.peers = new Map();
     this.localStream = null;
     this.localLevelMeter = null;
@@ -96,17 +98,17 @@ export class MeshManager {
       disconnectTimeout: null,
       isMuted: false,
       stats: { rtt: 0, packetLoss: 0, candidateType: 'bilinmiyor', isLocal: false },
+      pendingCandidates: [], // ICE adayları remoteDescription set edilene kadar burada bekletilir
     };
 
     // Karşıdan gelen ses akışı
     pc.ontrack = (event) => {
-      console.log(`[MeshManager] Ses track alındı: ${peerId}`);
+      console.log(`[MeshManager] 🔊 Ses akışı bağlandı (${peerId}):`, event.streams[0]);
       const remoteStream = event.streams[0];
       peerEntry.stream = remoteStream;
       audioEl.srcObject = remoteStream;
       audioEl.play().catch((e) => console.warn('[MeshManager] Audio autoplay uyarısı:', e.message));
 
-      // Karşı tarafın ses seviyesini dinle
       if (peerEntry.levelMeter) {
         peerEntry.levelMeter.destroy();
       }
@@ -122,24 +124,27 @@ export class MeshManager {
       if (event.candidate) {
         // Öncelik: Açık olan DataChannel üzerinden doğrudan karşıya gönder (internetsiz)
         if (peerEntry.dataChannel && peerEntry.dataChannel.readyState === 'open') {
-          peerEntry.dataChannel.send(
-            JSON.stringify({
-              type: 'ice-candidate',
-              candidate: event.candidate,
-            })
-          );
+          try {
+            peerEntry.dataChannel.send(
+              JSON.stringify({
+                type: 'ice-candidate',
+                candidate: event.candidate,
+              })
+            );
+          } catch (_) {}
         }
-        // Sunucu sinyalleşmesi üzerinden de ilet
+        // Sinyalleşme üzerinden ilet
         this.sendSignal(peerId, { candidate: event.candidate });
       }
     };
 
-    // Bağlantı durumu izleme
-    pc.onconnectionstatechange = () => {
+    // Bağlantı durumu izleme (connectionState ve iceConnectionState)
+    const updateConnState = () => {
       const state = pc.connectionState;
-      console.log(`[MeshManager] PC Durumu Değişti (${peerId}): ${state}`);
+      const iceState = pc.iceConnectionState;
+      console.log(`[MeshManager] Durum (${peerId}): PC=${state} | ICE=${iceState}`);
 
-      if (state === 'connected') {
+      if (state === 'connected' || iceState === 'connected' || iceState === 'completed') {
         if (peerEntry.disconnectTimeout) {
           clearTimeout(peerEntry.disconnectTimeout);
           peerEntry.disconnectTimeout = null;
@@ -147,14 +152,13 @@ export class MeshManager {
         }
         peerEntry.state = 'connected';
         this.notifyStateChange(peerId, 'connected');
-      } else if (state === 'disconnected' || state === 'failed') {
+      } else if (state === 'disconnected' || state === 'failed' || iceState === 'disconnected' || iceState === 'failed') {
         peerEntry.state = 'reconnecting';
         this.notifyStateChange(peerId, 'reconnecting');
 
-        // 4.5 saniye bekle; ağ arayüzü geçişinde (Hotspot) ICE kendini toparlayabilir
         if (!peerEntry.disconnectTimeout) {
           peerEntry.disconnectTimeout = setTimeout(() => {
-            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
               peerEntry.state = 'failed';
               this.notifyStateChange(peerId, 'failed');
               this.onPeerDisconnect(peerId);
@@ -164,9 +168,14 @@ export class MeshManager {
       }
     };
 
+    pc.onconnectionstatechange = updateConnState;
+    pc.oniceconnectionstatechange = updateConnState;
+
     // İnternetsiz haberleşme ve ICE takası için DataChannel oluştur
-    const dc = pc.createDataChannel('control', { negotiated: false });
-    this.setupDataChannel(peerId, dc, peerEntry);
+    try {
+      const dc = pc.createDataChannel('control', { negotiated: false });
+      this.setupDataChannel(peerId, dc, peerEntry);
+    } catch (_) {}
 
     pc.ondatachannel = (event) => {
       this.setupDataChannel(peerId, event.channel, peerEntry);
@@ -181,7 +190,9 @@ export class MeshManager {
 
     dc.onopen = () => {
       console.log(`[DataChannel] Peer ile doğrudan kontrol kanalı açıldı: ${peerId}`);
-      dc.send(JSON.stringify({ type: 'mic-state', isMuted: this.isMuted }));
+      try {
+        dc.send(JSON.stringify({ type: 'mic-state', isMuted: this.isMuted }));
+      } catch (_) {}
     };
 
     dc.onmessage = async (event) => {
@@ -214,8 +225,12 @@ export class MeshManager {
 
           case 'ice-candidate': {
             const pc = peerEntry.pc;
-            if (msg.candidate && pc.remoteDescription) {
-              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            if (msg.candidate) {
+              if (pc.remoteDescription && pc.remoteDescription.type) {
+                await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+              } else {
+                peerEntry.pendingCandidates.push(msg.candidate);
+              }
             }
             break;
           }
@@ -243,9 +258,12 @@ export class MeshManager {
   }
 
   async connectToPeer(peerId, name) {
+    console.log(`[MeshManager] Peer'a bağlanılıyor -> ${name} (${peerId})`);
     const pc = this.createPeerConnection(peerId, name);
     try {
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+      });
       await pc.setLocalDescription(offer);
       this.sendSignal(peerId, { sdp: offer, name });
     } catch (err) {
@@ -269,15 +287,32 @@ export class MeshManager {
 
     try {
       if (data.sdp) {
+        console.log(`[MeshManager] SDP (${data.sdp.type}) alındı: ${fromPeerId}`);
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+
+        // Bekleyen ICE adaylarını ekle
+        if (entry.pendingCandidates && entry.pendingCandidates.length > 0) {
+          for (const cand of entry.pendingCandidates) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (e) {
+              console.warn('[MeshManager] Bekleyen ICE adayı eklenemedi:', e.message);
+            }
+          }
+          entry.pendingCandidates = [];
+        }
+
         if (data.sdp.type === 'offer') {
-          const answer = await pc.createAnswer();
+          const answer = await pc.createAnswer({ offerToReceiveAudio: true });
           await pc.setLocalDescription(answer);
           this.sendSignal(fromPeerId, { sdp: answer });
         }
       } else if (data.candidate) {
-        if (pc.remoteDescription) {
+        if (pc.remoteDescription && pc.remoteDescription.type) {
           await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } else {
+          // Henüz remoteDescription set edilmediyse kuyrukta beklet
+          entry.pendingCandidates.push(data.candidate);
         }
       }
     } catch (err) {
@@ -407,7 +442,7 @@ export class MeshManager {
           activePeersCount: Array.from(this.peers.values()).filter((p) => p.state === 'connected').length,
         });
       }
-    }, 2500);
+    }, 2000);
   }
 
   removePeer(peerId) {
@@ -415,7 +450,9 @@ export class MeshManager {
     if (entry) {
       if (entry.disconnectTimeout) clearTimeout(entry.disconnectTimeout);
       if (entry.levelMeter) entry.levelMeter.destroy();
-      entry.pc.close();
+      try {
+        entry.pc.close();
+      } catch (_) {}
       if (entry.audioEl) {
         entry.audioEl.srcObject = null;
       }

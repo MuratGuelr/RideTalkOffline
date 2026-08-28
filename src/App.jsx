@@ -197,8 +197,9 @@ export default function App() {
         // Mikrofonu başlat
         await mesh.init();
 
-        // Katılan bizsek odadaki mevcut herkese teklif gönder
+        // Yeni katılan bizsek, odadaki mevcut herkese WebRTC teklifi gönder
         if (existingPeers && existingPeers.length > 0) {
+          console.log(`[App] ${existingPeers.length} mevcut katılımcıya WebRTC teklifi gönderiliyor...`);
           for (const p of existingPeers) {
             await mesh.connectToPeer(p.id, p.name);
           }
@@ -224,22 +225,35 @@ export default function App() {
   // Sinyalleşme olaylarını dinle
   const bindSignalingEvents = useCallback(
     (signaling) => {
+      // Odaya yeni bir sürücü katıldığında (biz zaten içerideyken)
       signaling.on('peer-joined', async (msg) => {
-        console.log('[App] Yeni sürücü katıldı:', msg);
+        console.log('[App] Yeni sürücü odaya katıldı:', msg.name, `(${msg.peerId})`);
         announceJoin(msg.peerId, msg.name);
         showToast(`${msg.name} interkoma katıldı`);
 
-        if (meshRef.current) {
-          await meshRef.current.connectToPeer(msg.peerId, msg.name);
-        }
+        // Yeni sürücüyü UI'a ekle (bağlantı kurulması bekleniyor)
+        setPeers((prev) => ({
+          ...prev,
+          [msg.peerId]: {
+            name: msg.name,
+            state: 'connecting',
+            isMuted: false,
+            stats: null,
+          },
+        }));
+
+        // Yeni katılan kişi bize teklif (Offer) gönderecektir, biz hazır bekliyoruz.
       });
 
+      // SDP veya ICE sinyali geldiğinde
       signaling.on('signal', async (msg) => {
+        console.log(`[App] Sinyal mesajı alındı (${msg.fromPeerId})`);
         if (meshRef.current) {
           await meshRef.current.handleSignal(msg.fromPeerId, msg.data);
         }
       });
 
+      // Sürücü ayrıldığında
       signaling.on('peer-left', (msg) => {
         console.log('[App] Sürücü ayrıldı:', msg);
         playSomeoneLeftSound();
@@ -265,7 +279,7 @@ export default function App() {
     [showToast]
   );
 
-  // Oda Oluştur
+  // Oda Oluştur (Lider)
   const handleStartRoom = async (name) => {
     try {
       setError(null);
@@ -276,13 +290,23 @@ export default function App() {
       await signaling.connect();
       bindSignalingEvents(signaling);
 
-      signaling.on('room-created', (msg) => {
-        setIsConnecting(false);
-        setRoomData({
+      signaling.on('room-created', async (msg) => {
+        const newRoomData = {
           roomCode: msg.roomCode,
           peerId: msg.peerId,
           name: msg.name,
-        });
+        };
+        setRoomData(newRoomData);
+        setIsConnecting(false);
+
+        // Lider odayı oluşturur oluşturmaz mikrofonunu ve WebRTC motorunu başlatıp Kokpite girer
+        try {
+          await startMeshSession(newRoomData, []);
+          setView('active');
+          speakText('İnterkom odası açıldı. Katılımcılar bekleniyor.');
+        } catch (meshErr) {
+          setError(`Mikrofon açılamadı: ${meshErr.message}`);
+        }
       });
 
       signaling.createRoom(name);
@@ -292,21 +316,7 @@ export default function App() {
     }
   };
 
-  // Aktif Kokpite Gir
-  const handleEnterActiveCockpit = async () => {
-    try {
-      setIsConnecting(true);
-      await startMeshSession(roomData, []);
-      setIsConnecting(false);
-      setView('active');
-      speakText('İnterkom aktif. İyi sürüşler!');
-    } catch (err) {
-      setError(err.message);
-      setIsConnecting(false);
-    }
-  };
-
-  // Odaya Katıl
+  // Odaya Katıl (Katılımcı)
   const handleJoinRoom = async (code, name) => {
     try {
       setError(null);
@@ -325,7 +335,20 @@ export default function App() {
         };
         setRoomData(newRoomData);
 
+        // Mevcut katılımcıları UI'a ekle
+        const initialPeers = {};
+        (msg.existingPeers || []).forEach((p) => {
+          initialPeers[p.id] = {
+            name: p.name,
+            state: 'connecting',
+            isMuted: false,
+            stats: null,
+          };
+        });
+        setPeers(initialPeers);
+
         try {
+          // Katılımcı oturumu başlatır ve mevcut kişilere teklif (Offer) gönderir
           await startMeshSession(newRoomData, msg.existingPeers || []);
           setIsConnecting(false);
           setView('active');
@@ -495,7 +518,7 @@ export default function App() {
             isConnecting={isConnecting}
             error={error}
             roomData={roomData}
-            onEnterActiveRoom={handleEnterActiveCockpit}
+            onEnterActiveRoom={() => setView('active')}
             onBack={() => setView('home')}
           />
         </div>
