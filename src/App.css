@@ -974,18 +974,20 @@
 }
 
 /* =========================================================================
-   MODALS (Scanner, Hotspot Guide, QR)
+   MODALS (Scanner, Hotspot Guide, QR, Leave Confirm)
    ========================================================================= */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(8px);
-  z-index: 100;
+  background: rgba(0, 0, 0, 0.88);
+  backdrop-filter: blur(10px);
+  z-index: 999;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: 12px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-content {
@@ -994,8 +996,50 @@
   border-radius: var(--radius-lg);
   max-width: 480px;
   width: 100%;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8);
+  max-height: min(90vh, calc(100dvh - 24px));
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.85);
   overflow: hidden;
+  margin: auto;
+}
+
+.modal-scrollable-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-card);
+  flex-shrink: 0;
+}
+
+.hud-btn-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.hud-btn-action:hover, .hud-btn-action:active {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--text-primary);
+}
+
+.hud-btn-action.active-fullscreen {
+  background: rgba(0, 229, 255, 0.18);
+  color: var(--neon-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.4);
 }
 
 .modal-header {

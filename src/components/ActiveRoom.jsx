@@ -16,15 +16,18 @@ import {
   Users,
   X,
   Zap,
+  Maximize,
+  Minimize,
+  AlertTriangle,
 } from 'lucide-react';
 
 export default function ActiveRoom({
   roomCode,
   selfName,
-  peers, // Map or Object of peerId -> peerState
+  peers,
   localVolume,
   localIsSpeaking,
-  peerVolumes, // Map of peerId -> { level, isSpeaking }
+  peerVolumes,
   isMuted,
   onToggleMute,
   onSendHorn,
@@ -36,11 +39,39 @@ export default function ActiveRoom({
 }) {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [isLeaveConfirmOpen, setIsLeaveConfirmOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [hornCooldown, setHornCooldown] = useState(false);
 
   const peerList = Object.entries(peers || {});
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-  const joinUrl = `${currentOrigin}?room=${roomCode}`;
+  const joinUrl = currentOrigin + '?room=' + roomCode;
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.warn('[ActiveRoom] Tam ekran hatas?:', err.message);
+    }
+  };
 
   const handleHornClick = () => {
     if (hornCooldown) return;
@@ -61,12 +92,23 @@ export default function ActiveRoom({
 
           <button
             type="button"
-            className="hud-btn-qr"
+            className="hud-btn-action"
             onClick={() => setIsQrModalOpen(true)}
-            title="Oda QR Kodunu Göster"
+            title="Oda QR Kodunu G?ster"
           >
             <QrCode size={16} />
             <span className="hide-mobile">QR</span>
+          </button>
+
+          {/* Fullscreen Button */}
+          <button
+            type="button"
+            className={"hud-btn-action " + (isFullscreen ? "active-fullscreen" : "")}
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "Tam Ekrandan ??k" : "Tam Ekran Yap"}
+          >
+            {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+            <span className="hide-mobile">{isFullscreen ? "K???lt" : "Tam Ekran"}</span>
           </button>
         </div>
 
@@ -81,16 +123,16 @@ export default function ActiveRoom({
 
         <div className="hud-right">
           <div
-            className={`hud-wakelock-tag ${isWakeLockActive ? 'active' : ''}`}
+            className={"hud-wakelock-tag " + (isWakeLockActive ? "active" : "")}
             title={
               isWakeLockActive
-                ? 'Ekran kilidi açık (Ekran kapanmayacak)'
-                : 'Ekran kilidi aktif değil'
+                ? "Ekran kilidi a??k (Ekran kapanmayacak)"
+                : "Ekran kilidi aktif de?il"
             }
           >
             {isWakeLockActive ? <Lock size={14} /> : <LockOpen size={14} />}
             <span className="hide-mobile">
-              {isWakeLockActive ? 'Ekran Uyanık' : 'Kilit Kapalı'}
+              {isWakeLockActive ? "Ekran Uyan?k" : "Kilit Kapal?"}
             </span>
           </div>
         </div>
@@ -110,11 +152,11 @@ export default function ActiveRoom({
           <div className="hotspot-banner-content">
             <Zap size={16} className="text-neon animate-pulse" />
             <span>
-              <strong>İnternetsiz Mod:</strong> Hotspot açarak hücresel şebeke olmadan kesintisiz konuşun.
+              <strong>?nternetsiz Mod:</strong> Hotspot a?arak h?cresel ?ebeke olmadan kesintisiz konu?un.
             </span>
           </div>
           <button type="button" className="btn-banner-guide">
-            Nasıl Yapılır?
+            Nas?l Yap?l?r?
           </button>
         </div>
       )}
@@ -125,7 +167,7 @@ export default function ActiveRoom({
           <div className="riders-header">
             <div className="riders-count">
               <Users size={16} className="text-neon" />
-              <span>Gruptaki Sürücüler ({peerList.length + 1})</span>
+              <span>Gruptaki S?r?c?ler ({peerList.length + 1})</span>
             </div>
             <div className="riders-mesh-tag">
               <span>Tam Mesh WebRTC</span>
@@ -135,7 +177,7 @@ export default function ActiveRoom({
           <div className="riders-grid">
             {/* Self Rider Card */}
             <ParticipantCard
-              name={selfName || 'Sen'}
+              name={selfName || "Sen"}
               isSelf={true}
               isMuted={isMuted}
               isSpeaking={localIsSpeaking}
@@ -150,12 +192,12 @@ export default function ActiveRoom({
               return (
                 <ParticipantCard
                   key={peerId}
-                  name={peer.name || 'Sürücü'}
+                  name={peer.name || "S?r?c?"}
                   isSelf={false}
                   isMuted={peer.isMuted}
                   isSpeaking={peerVol.isSpeaking}
                   volumeLevel={peerVol.level}
-                  connectionState={peer.state || 'connected'}
+                  connectionState={peer.state || "connected"}
                   stats={peer.stats}
                 />
               );
@@ -170,24 +212,24 @@ export default function ActiveRoom({
           {/* Main Giant Mic Toggle Button */}
           <button
             type="button"
-            className={`btn-glove-huge ${isMuted ? 'btn-mic-muted' : 'btn-mic-active'}`}
+            className={"btn-glove-huge " + (isMuted ? "btn-mic-muted" : "btn-mic-active")}
             onClick={onToggleMute}
-            aria-label={isMuted ? 'Mikrofonu Aç' : 'Mikrofonu Kapat'}
+            aria-label={isMuted ? "Mikrofonu A?" : "Mikrofonu Kapat"}
           >
             {isMuted ? <MicOff size={32} /> : <Mic size={32} />}
-            <span className="control-label">{isMuted ? 'MİKROFON KAPALI' : 'MİKROFON AÇIK'}</span>
+            <span className="control-label">{isMuted ? "M?KROFON KAPALI" : "M?KROFON A?IK"}</span>
           </button>
 
           {/* Motorcycle Horn / Alert Chime Button */}
           <button
             type="button"
-            className={`btn-glove-action btn-horn ${hornCooldown ? 'cooldown' : ''}`}
+            className={"btn-glove-action btn-horn " + (hornCooldown ? "cooldown" : "")}
             onClick={handleHornClick}
             disabled={hornCooldown}
-            title="Tüm gruba kask ikaz tonu gönder"
+            title="T?m gruba kask ikaz tonu g?nder"
           >
             <Bell size={24} />
-            <span className="control-label">İKAZ BİP</span>
+            <span className="control-label">?KAZ B?P</span>
           </button>
 
           {/* Hotspot Guide Button */}
@@ -195,18 +237,18 @@ export default function ActiveRoom({
             type="button"
             className="btn-glove-action btn-hotspot"
             onClick={() => setIsGuideOpen(true)}
-            title="İnternetsiz Hotspot Rehberi"
+            title="?nternetsiz Hotspot Rehberi"
           >
             <Radio size={24} />
             <span className="control-label">HOTSPOT</span>
           </button>
 
-          {/* Leave Room Button */}
+          {/* Leave Room Button (Safety confirmation modal) */}
           <button
             type="button"
             className="btn-glove-action btn-leave"
-            onClick={onLeaveRoom}
-            title="İnterkomdan Ayrıl"
+            onClick={() => setIsLeaveConfirmOpen(true)}
+            title="?nterkomdan Ayr?l"
           >
             <PhoneOff size={24} />
             <span className="control-label">AYRIL</span>
@@ -217,20 +259,63 @@ export default function ActiveRoom({
       {/* Hotspot Transition Modal */}
       <HotspotGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
 
+      {/* Leave Room Safety Confirmation Modal */}
+      {isLeaveConfirmOpen && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setIsLeaveConfirmOpen(false); }}>
+          <div className="modal-content confirm-leave-modal">
+            <div className="modal-header">
+              <div className="modal-title text-crimson">
+                <AlertTriangle size={20} />
+                <span>?nterkomdan Ayr?l</span>
+              </div>
+              <button type="button" className="btn-close" onClick={() => setIsLeaveConfirmOpen(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-scrollable-body p-4" style={{ textAlign: "center" }}>
+              <p style={{ fontSize: "0.95rem", color: "#f8fafc", lineHeight: "1.4", marginBottom: "16px" }}>
+                Telsiz odas?ndan ayr?lmak istedi?inize emin misiniz? Ses ba?lant?n?z sonland?r?lacakt?r.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: "14px", borderRadius: "12px", background: "rgba(255,255,255,0.08)", color: "#ffffff", fontWeight: "700" }}
+                  onClick={() => setIsLeaveConfirmOpen(false)}
+                >
+                  Vazge?
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{ padding: "14px", borderRadius: "12px", background: "linear-gradient(135deg, #ff1744 0%, #b70928 100%)", color: "#ffffff", fontWeight: "800" }}
+                  onClick={() => {
+                    setIsLeaveConfirmOpen(false);
+                    onLeaveRoom();
+                  }}
+                >
+                  Evet, Ayr?l
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* In-Room QR Code Share Modal */}
       {isQrModalOpen && (
-        <div className="modal-overlay">
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setIsQrModalOpen(false); }}>
           <div className="modal-content">
             <div className="modal-header">
               <div className="modal-title">
                 <QrCode size={20} className="icon-neon" />
-                <span>Odaya Katılım QR Kodu</span>
+                <span>Odaya Kat?l?m QR Kodu</span>
               </div>
               <button type="button" className="btn-close" onClick={() => setIsQrModalOpen(false)}>
                 <X size={20} />
               </button>
             </div>
-            <div className="p-4">
+            <div className="modal-scrollable-body p-4">
               <QRCodeDisplay roomCode={roomCode} joinUrl={joinUrl} />
             </div>
           </div>

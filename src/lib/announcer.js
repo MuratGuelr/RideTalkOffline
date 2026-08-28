@@ -1,10 +1,56 @@
-// Web Speech API tabanlı Türkçe sesli anons ve sesli bildirim modülü
-// Tamamen yerel çalışır, internet gerektirmez.
+// Web Speech API ve Yerel MP3 Ses Efektleri Mod?l? (/public/sounds/)
+// Mute, Unmute, Someone Left ve TTS anonslar?
 
 const nameCache = new Map(); // peerId -> isim
 let isSpeechAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window;
 let isAudioToneAvailable = typeof window !== 'undefined' && ('AudioContext' in window || 'webkitAudioContext' in window);
 let audioCtx = null;
+
+// Ses dosyalar?n? bellekte ?nbelle?e al (s?f?r gecikme)
+const soundCache = {};
+
+function getSound(filename) {
+  if (typeof window === 'undefined') return null;
+  if (!soundCache[filename]) {
+    const audio = new Audio('/sounds/' + filename);
+    audio.preload = 'auto';
+    soundCache[filename] = audio;
+  }
+  return soundCache[filename];
+}
+
+// MP3 ses dosyas?n? an?nda ?al
+export function playSoundFile(filename) {
+  try {
+    const sound = getSound(filename);
+    if (sound) {
+      sound.currentTime = 0;
+      const playPromise = sound.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn('[Announcer] MP3 ?alma uyar?s? (' + filename + '):', err.message);
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[Announcer] MP3 ?al?namad?:', err);
+  }
+}
+
+// 1. Mute Sesi (/sounds/mute.mp3)
+export function playMuteSound() {
+  playSoundFile('mute.mp3');
+}
+
+// 2. Unmute Sesi (/sounds/unmute.mp3)
+export function playUnmuteSound() {
+  playSoundFile('unmute.mp3');
+}
+
+// 3. Biri Ayr?l?nca / Ba?lant? Kesilince (/sounds/someone-left.mp3)
+export function playSomeoneLeftSound() {
+  playSoundFile('someone-left.mp3');
+}
 
 function getAudioContext() {
   if (!audioCtx && isAudioToneAvailable) {
@@ -30,11 +76,11 @@ export function unregisterPeerName(peerId) {
 }
 
 export function getPeerName(peerId) {
-  return nameCache.get(peerId) || 'Bir sürücü';
+  return nameCache.get(peerId) || 'Bir s?r?c?';
 }
 
 /**
- * Motosiklet kaskında duyulabilecek özel çift tonlu ikaz sesi üretir
+ * Motosiklet kask ikaz tonu (?ift bip)
  */
 export function playAlertTone(type = 'beep') {
   try {
@@ -48,26 +94,7 @@ export function playAlertTone(type = 'beep') {
 
     const now = ctx.currentTime;
 
-    if (type === 'disconnect') {
-      // Düşen ton (uyarı)
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(440, now);
-      osc.frequency.exponentialRampToValueAtTime(220, now + 0.3);
-      gain.gain.setValueAtTime(0.25, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
-      osc.start(now);
-      osc.stop(now + 0.35);
-    } else if (type === 'connect') {
-      // Yükselen ton (onay)
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(330, now);
-      osc.frequency.exponentialRampToValueAtTime(660, now + 0.25);
-      gain.gain.setValueAtTime(0.2, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
-      osc.start(now);
-      osc.stop(now + 0.3);
-    } else if (type === 'horn') {
-      // Motosiklet interkom dikkat/korna tonu (çift bip)
+    if (type === 'horn') {
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(880, now);
       gain.gain.setValueAtTime(0.3, now);
@@ -78,27 +105,25 @@ export function playAlertTone(type = 'beep') {
       osc.stop(now + 0.4);
     }
   } catch (err) {
-    console.warn('[Announcer] İkaz tonu çalınamadı:', err);
+    console.warn('[Announcer] ?kaz tonu hatas?:', err);
   }
 }
 
 /**
- * Türkçe TTS metin anonsu yapar
+ * T?rk?e TTS metin anonsu yapar
  */
 export function speakText(text) {
   if (!isSpeechAvailable || !text) return;
 
   try {
-    // Önceki bekleyen anonsları temizle
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'tr-TR';
-    utterance.rate = 1.05; // Motosiklette seri ve net duyulması için hafif tempolu
+    utterance.rate = 1.05;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
 
-    // Türkçe ses varsa seç
     const voices = window.speechSynthesis.getVoices();
     const trVoice = voices.find((v) => v.lang.startsWith('tr'));
     if (trVoice) {
@@ -107,34 +132,25 @@ export function speakText(text) {
 
     window.speechSynthesis.speak(utterance);
   } catch (err) {
-    console.warn('[Announcer] TTS hatası:', err);
+    console.warn('[Announcer] TTS hatas?:', err);
   }
 }
 
 export function announceJoin(peerId, name) {
   if (name) registerPeerName(peerId, name);
   const riderName = name || getPeerName(peerId);
-  playAlertTone('connect');
-  speakText(`${riderName} interkoma katıldı`);
+  playUnmuteSound();
+  speakText(riderName + ' interkoma kat?ld?');
 }
 
 export function announceDisconnect(peerId) {
   const riderName = getPeerName(peerId);
-  playAlertTone('disconnect');
-  speakText(`${riderName} bağlantısı koptu`);
+  playSomeoneLeftSound();
+  speakText(riderName + ' ba?lant?s? koptu');
 }
 
 export function announceReconnect(peerId) {
   const riderName = getPeerName(peerId);
-  playAlertTone('connect');
-  speakText(`${riderName} tekrar bağlandı`);
-}
-
-export function announceHotspotMode(isLocal) {
-  playAlertTone('connect');
-  if (isLocal) {
-    speakText('Yerel Hotspot ağına geçildi. İnternetsiz devam ediliyor.');
-  } else {
-    speakText('İnternet ağına bağlanıldı.');
-  }
+  playUnmuteSound();
+  speakText(riderName + ' tekrar ba?land?');
 }

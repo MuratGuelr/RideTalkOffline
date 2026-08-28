@@ -12,6 +12,9 @@ import {
   announceReconnect,
   playAlertTone,
   speakText,
+  playMuteSound,
+  playUnmuteSound,
+  playSomeoneLeftSound,
 } from './lib/announcer.js';
 import { keepScreenAwake, releaseScreenAwake, onWakeLockStatusChange } from './lib/wakeLock.js';
 import { watchNetworkChanges } from './lib/networkWatcher.js';
@@ -53,6 +56,34 @@ export default function App() {
       setToastMessage(null);
     }, 4000);
   }, []);
+
+  // Prevent accidental back navigation / reload when in active room
+  useEffect(() => {
+    if (view === 'active') {
+      const handleBeforeUnload = (e) => {
+        e.preventDefault();
+        e.returnValue = '?nterkom oturumu aktif. Ayr?lmak istedi?inize emin misiniz?';
+        return e.returnValue;
+      };
+      window.addEventListener('beforeunload', handleBeforeUnload);
+
+      // Push history state to intercept mobile swipe-back and back button
+      window.history.pushState({ ridetalk: 'active' }, '');
+      const handlePopState = () => {
+        if (window.confirm('?nterkom odas?ndan ayr?lmak istiyor musunuz?')) {
+          handleLeaveRoomDirect();
+        } else {
+          window.history.pushState({ ridetalk: 'active' }, '');
+        }
+      };
+      window.addEventListener('popstate', handlePopState);
+
+      return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+        window.removeEventListener('popstate', handlePopState);
+      };
+    }
+  }, [view]);
 
   // Check URL query parameters for direct invite links (e.g. ?room=BOLU7F)
   useEffect(() => {
@@ -210,7 +241,8 @@ export default function App() {
       });
 
       signaling.on('peer-left', (msg) => {
-        console.log('[App] Sürücü ayrıldı:', msg);
+        console.log('[App] S?r?c? ayr?ld?:', msg);
+        playSomeoneLeftSound();
         announceDisconnect(msg.peerId);
         showToast(`${msg.name || 'Sürücü'} odadan ayrıldı`);
 
