@@ -20,7 +20,7 @@ import {
 } from './lib/announcer.js';
 import { keepScreenAwake, releaseScreenAwake, onWakeLockStatusChange } from './lib/wakeLock.js';
 import { watchNetworkChanges } from './lib/networkWatcher.js';
-import { Radio, PlusCircle, LogIn, Shield, Wifi, Volume2, Settings, Zap, User } from 'lucide-react';
+import { Radio, PlusCircle, LogIn, Shield, Wifi, Volume2, Settings, Zap, User, X, Timer } from 'lucide-react';
 import './App.css';
 
 export default function App() {
@@ -38,6 +38,10 @@ export default function App() {
     return localStorage.getItem('ridetalk_autoconnect') === 'true';
   });
 
+  // ⭐ Geri sayım (3.. 2.. 1..) ve İptal Mekanizması
+  const [autoCountdown, setAutoCountdown] = useState(null);
+  const isAutoCancelledRef = useRef(false);
+
   const [peers, setPeers] = useState({});
   const [localVolume, setLocalVolume] = useState(0);
   const [localIsSpeaking, setLocalIsSpeaking] = useState(false);
@@ -53,6 +57,7 @@ export default function App() {
   const meshRef = useRef(null);
   const toastTimeoutRef = useRef(null);
   const unwatchNetworkRef = useRef(null);
+  const countdownIntervalRef = useRef(null);
 
   const showToast = useCallback((msg) => {
     setToastMessage(msg);
@@ -61,6 +66,11 @@ export default function App() {
   }, []);
 
   const handleLeaveRoomDirect = useCallback(() => {
+    // Odadan manuel çıkıldığında otomatik bağlanma döngüsünü durdur
+    isAutoCancelledRef.current = true;
+    setAutoCountdown(null);
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
     // 1. ANINDA Arayüzü Ana Sayfaya Döndür (0ms)
     setView('home');
     setRoomData(null);
@@ -198,14 +208,12 @@ export default function App() {
       meshRef.current = mesh;
       await mesh.init();
 
-      // Odadaki mevcut kişilere teklif gönder
       if (existingPeers.length > 0) {
         for (const p of existingPeers) {
           await mesh.connectToPeer(p.id, p.name);
         }
       }
 
-      // Ağ değişim izleyicisini başlat
       if (unwatchNetworkRef.current) unwatchNetworkRef.current();
       unwatchNetworkRef.current = watchNetworkChanges(() => {
         if (meshRef.current) {
@@ -223,6 +231,9 @@ export default function App() {
   const handleAutoConnect = useCallback(
     async (customRoom = 'MOTO-RIDE') => {
       try {
+        setAutoCountdown(null);
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
         setError(null);
         setIsConnecting(true);
         ensureAudioUnlocked();
@@ -233,7 +244,6 @@ export default function App() {
         const signaling = getSignalingClient();
         await signaling.connect();
 
-        // Sinyal olaylarını dinle
         signaling.on('peer-joined', async (msg) => {
           announceJoin(msg.peerId, msg.name);
           showToast(`${msg.name} telsize bağlandı`);
@@ -285,7 +295,6 @@ export default function App() {
           }
         });
 
-        // Firebase grubuna otomatik katıl
         await signaling.autoJoinGroup(customRoom, name);
       } catch (err) {
         console.error('[App] Otomatik bağlantı hatası:', err);
@@ -296,15 +305,44 @@ export default function App() {
     [driverName, getSignalingClient, showToast, startMeshSession]
   );
 
-  // Açılışta otomatik bağlanma açıksa ve ana sayfadaysa
+  // ⭐ GERİ SAYIM (3.. 2.. 1..) İLE GÜVENLİ OTOMATİK BAĞLANMA ⭐
   useEffect(() => {
-    if (autoConnectOnLoad && view === 'home' && !isConnecting && !roomData) {
-      const timer = setTimeout(() => {
-        handleAutoConnect('MOTO-RIDE');
-      }, 500);
-      return () => clearTimeout(timer);
+    if (
+      autoConnectOnLoad &&
+      view === 'home' &&
+      !isConnecting &&
+      !roomData &&
+      !isAutoCancelledRef.current
+    ) {
+      let count = 3;
+      setAutoCountdown(count);
+
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
+      countdownIntervalRef.current = setInterval(() => {
+        count -= 1;
+        if (count <= 0) {
+          clearInterval(countdownIntervalRef.current);
+          setAutoCountdown(null);
+          handleAutoConnect('MOTO-RIDE');
+        } else {
+          setAutoCountdown(count);
+        }
+      }, 1000);
+
+      return () => {
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      };
     }
   }, [autoConnectOnLoad, view, isConnecting, roomData, handleAutoConnect]);
+
+  // Geri sayımı iptal etme
+  const cancelAutoCountdown = () => {
+    isAutoCancelledRef.current = true;
+    setAutoCountdown(null);
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    showToast('Otomatik bağlanma iptal edildi');
+  };
 
   const handleToggleMute = () => {
     const next = !isMuted;
@@ -401,14 +439,66 @@ export default function App() {
                 type="checkbox"
                 checked={autoConnectOnLoad}
                 onChange={(e) => {
-                  setAutoConnectOnLoad(e.target.checked);
-                  localStorage.setItem('ridetalk_autoconnect', e.target.checked ? 'true' : 'false');
+                  const val = e.target.checked;
+                  setAutoConnectOnLoad(val);
+                  localStorage.setItem('ridetalk_autoconnect', val ? 'true' : 'false');
+                  if (!val) {
+                    cancelAutoCountdown();
+                  } else {
+                    isAutoCancelledRef.current = false;
+                  }
                 }}
                 style={{ width: '16px', height: '16px', accentColor: '#00e5ff' }}
               />
-              <span>Sayfa açıldığında otomatik bağlan (0 tık)</span>
+              <span>Sayfa açıldığında otomatik bağlan (3sn Geri Sayım)</span>
             </label>
           </div>
+
+          {/* ⭐ 3.. 2.. 1.. GERİ SAYIM ŞERİDİ (İPTAL BUTONLU) ⭐ */}
+          {autoCountdown !== null && (
+            <div
+              className="animate-scale-up"
+              style={{
+                width: '100%',
+                background: 'linear-gradient(90deg, rgba(0, 229, 255, 0.2) 0%, rgba(0, 230, 118, 0.2) 100%)',
+                border: '1.5px solid #00e5ff',
+                borderRadius: '16px',
+                padding: '12px 18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                boxShadow: '0 0 20px rgba(0, 229, 255, 0.3)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Timer size={22} className="text-neon animate-pulse" />
+                <span style={{ fontSize: '0.92rem', fontWeight: '800', color: '#ffffff' }}>
+                  Bağlanılıyor: <strong style={{ color: '#00e5ff', fontSize: '1.15rem' }}>{autoCountdown}</strong> sn...
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={cancelAutoCountdown}
+                style={{
+                  background: 'rgba(255, 23, 68, 0.2)',
+                  border: '1px solid rgba(255, 23, 68, 0.5)',
+                  color: '#ff8a80',
+                  padding: '6px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                <X size={14} />
+                <span>İptal Et</span>
+              </button>
+            </div>
+          )}
 
           {/* ⭐ TEK TUŞLA OTOMATİK BAĞLAN BUTONU ⭐ */}
           <div className="lobby-cards-grid">
@@ -444,6 +534,7 @@ export default function App() {
               type="button"
               className="lobby-action-card card-create"
               onClick={() => {
+                cancelAutoCountdown();
                 setError(null);
                 setRoomData(null);
                 setView('create');
@@ -462,6 +553,7 @@ export default function App() {
               type="button"
               className="lobby-action-card card-join"
               onClick={() => {
+                cancelAutoCountdown();
                 setError(null);
                 setView('join');
               }}
@@ -508,9 +600,12 @@ export default function App() {
                 background: 'rgba(255,255,255,0.04)',
                 padding: '6px 12px',
                 borderRadius: '9999px',
-                border: '1px solid rgba(255,255,255,0.06)'
+                border: '1px solid rgba(255,255,255,0.06)',
               }}
-              onClick={() => setIsServerSettingsOpen(true)}
+              onClick={() => {
+                cancelAutoCountdown();
+                setIsServerSettingsOpen(true);
+              }}
             >
               <Settings size={13} />
               <span>Ayarlar</span>
@@ -572,20 +667,6 @@ export default function App() {
           isWakeLockActive={isWakeLockActive}
           isOnline={isOnline}
           toastMessage={toastMessage}
-          meshManager={meshRef.current}
-          showReconnectQRPrompt={false}
-          onOfflineHandshakeSuccess={(partnerName) => {
-            showToast(`${partnerName} ile ses bağlantısı kuruldu!`);
-            setPeers((prev) => ({
-              ...prev,
-              offline_peer: {
-                name: partnerName || 'Sürücü',
-                state: 'connected',
-                isMuted: false,
-                stats: { isLocal: true, rtt: 10 },
-              },
-            }));
-          }}
         />
       )}
     </div>

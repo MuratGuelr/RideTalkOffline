@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mic, MicOff, Wifi, Radio, User } from 'lucide-react';
+import { Mic, MicOff, Radio, User, Activity } from 'lucide-react';
 
 export default function ParticipantCard({
   name,
@@ -17,82 +17,94 @@ export default function ParticipantCard({
 
   return (
     <div
-      className={`rider-card ${isSelf ? 'rider-self ' : ''}${isSpeaking && !isMuted ? 'rider-speaking ' : ''}${isFailed ? 'rider-disconnected' : ''}`}
+      className={`rider-card ${isSelf ? 'rider-self' : ''} ${
+        isSpeaking && !isMuted ? 'rider-speaking' : ''
+      } ${isFailed ? 'rider-disconnected' : ''}`}
     >
-      {/* Konuşma Parlama Halkası */}
+      {/* Konuşurken Nabız Gibi Parlayan Dış Çerçeve */}
       {isSpeaking && !isMuted && <div className="speaking-glow-ring"></div>}
 
-      <div className="rider-avatar-wrapper">
-        <div className="rider-avatar">
-          <User size={28} />
-        </div>
-        <div
-          className={`rider-status-dot ${isConnected ? 'dot-connected' : (isConnecting || isReconnecting) ? 'dot-reconnecting' : 'dot-failed'}`}
-          title={
-            isConnected
-              ? 'Bağlı'
-              : isConnecting
-              ? 'Bağlantı Kuruluyor...'
-              : isReconnecting
-              ? 'Yeniden Bağlanıyor...'
-              : 'Bağlantı Koptu'
-          }
-        />
-      </div>
-
-      <div className="rider-info">
-        <div className="rider-name-row">
-          <span className="rider-name">
-            {name} {isSelf && <span className="self-tag">(Sen)</span>}
-          </span>
-          {isMuted ? (
-            <span className="mute-icon-tag" title="Mikrofon Kapalı">
-              <MicOff size={14} className="text-crimson" />
-            </span>
-          ) : (
-            <span className="mic-icon-tag" title="Mikrofon Açık">
-              <Mic size={14} className="text-emerald" />
-            </span>
-          )}
-        </div>
-
-        {/* Canlı Ses Seviyesi Çubuğu */}
-        <div className="rider-volume-track">
+      <div className="rider-card-inner">
+        {/* Sol Kısım: Kask / Sürücü Avatarı ve Canlı Durum Noktası */}
+        <div className="rider-avatar-wrapper">
+          <div className={`rider-avatar ${isSpeaking && !isMuted ? 'avatar-speaking' : ''}`}>
+            <User size={30} />
+          </div>
           <div
-            className="rider-volume-fill"
-            style={{
-              width: `${isMuted ? 0 : volumeLevel}%`,
-              backgroundColor: volumeLevel > 60 ? '#ff6b00' : '#00e5ff',
-            }}
+            className={`rider-status-dot ${
+              isConnected
+                ? 'dot-connected'
+                : isConnecting || isReconnecting
+                ? 'dot-reconnecting'
+                : 'dot-failed'
+            }`}
+            title={
+              isConnected
+                ? 'Bağlı (Canlı)'
+                : isConnecting
+                ? 'Bağlanıyor...'
+                : isReconnecting
+                ? 'Yeniden Bağlanıyor...'
+                : 'Bağlantı Koptu'
+            }
           />
         </div>
 
-        {/* Gecikme ve Ağ Bilgisi */}
-        <div className="rider-meta-row">
-          {isConnected ? (
-            <>
-              <span className="status-text text-emerald">
-                {stats?.isLocal ? (
-                  <span className="flex-center gap-1">
-                    <Radio size={11} /> Hotspot
-                  </span>
-                ) : (
-                  <span className="flex-center gap-1">
-                    <Wifi size={11} /> STUN
-                  </span>
-                )}
-              </span>
-              <span className="rtt-text">
-                {stats?.rtt ? `${stats.rtt} ms` : '15 ms'}
-              </span>
-            </>
-          ) : isConnecting ? (
-            <span className="status-text text-yellow">Bağlantı Kuruluyor...</span>
-          ) : isReconnecting ? (
-            <span className="status-text text-yellow">Yeniden Bağlanıyor...</span>
-          ) : (
-            <span className="status-text text-crimson">Koptu (Bekleniyor)</span>
-          )}
+        {/* Orta Kısım: İsim, Mikrofon Durumu ve Canlı Ses Ekolayzeri */}
+        <div className="rider-info-col">
+          <div className="rider-name-row">
+            <div className="rider-name-group">
+              <span className="rider-name">{name}</span>
+              {isSelf && <span className="self-badge">SEN</span>}
+            </div>
+
+            {/* Mikrofon / Konuşma Durumu */}
+            <div className="rider-state-badge">
+              {isMuted ? (
+                <span className="badge-mute">
+                  <MicOff size={13} />
+                  <span>KAPALI</span>
+                </span>
+              ) : isSpeaking ? (
+                <span className="badge-speaking">
+                  <Activity size={13} className="animate-pulse" />
+                  <span>KONUŞUYOR</span>
+                </span>
+              ) : (
+                <span className="badge-live">
+                  <Mic size={13} />
+                  <span>CANLI</span>
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Canlı Ses Seviyesi İlerleme Çubuğu */}
+          <div className="rider-volume-container">
+            <div
+              className="rider-volume-bar"
+              style={{
+                width: `${isMuted ? 0 : Math.max(isSpeaking ? 30 : 0, volumeLevel)}%`,
+                background:
+                  volumeLevel > 60
+                    ? 'linear-gradient(90deg, #00e5ff 0%, #ff6b00 100%)'
+                    : 'linear-gradient(90deg, #00e676 0%, #00e5ff 100%)',
+              }}
+            />
+          </div>
+
+          {/* Alt Bilgi: Ping / Ağ Tipi */}
+          <div className="rider-footer-row">
+            <div className="telemetry-item">
+              <Radio size={12} className="text-neon" />
+              <span>{stats?.isLocal ? 'Hotspot Wi-Fi' : 'Doğrudan P2P'}</span>
+            </div>
+
+            <div className="telemetry-ping">
+              <span className="ping-dot"></span>
+              <span>{stats?.rtt ? `${stats.rtt} ms` : '10 ms'}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
