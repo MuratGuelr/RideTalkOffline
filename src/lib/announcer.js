@@ -1,12 +1,12 @@
-// Web Speech API ve Yerel MP3 Ses Efektleri Mod?l? (/public/sounds/)
-// Mute, Unmute, Someone Left ve TTS anonslar?
+// Web Speech API ve Yerel MP3 Ses Efektleri Modülü (/public/sounds/)
+// Mute, Unmute, Someone Left ve Türkçe TTS anonsları
 
 const nameCache = new Map(); // peerId -> isim
 let isSpeechAvailable = typeof window !== 'undefined' && 'speechSynthesis' in window;
 let isAudioToneAvailable = typeof window !== 'undefined' && ('AudioContext' in window || 'webkitAudioContext' in window);
 let audioCtx = null;
 
-// Ses dosyalar?n? bellekte ?nbelle?e al (s?f?r gecikme)
+// Ses dosyalarını bellekte önbelleğe al (sıfır gecikme)
 const soundCache = {};
 
 function getSound(filename) {
@@ -19,7 +19,7 @@ function getSound(filename) {
   return soundCache[filename];
 }
 
-// MP3 ses dosyas?n? an?nda ?al
+// MP3 ses dosyasını anında çal
 export function playSoundFile(filename) {
   try {
     const sound = getSound(filename);
@@ -28,12 +28,12 @@ export function playSoundFile(filename) {
       const playPromise = sound.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          console.warn('[Announcer] MP3 ?alma uyar?s? (' + filename + '):', err.message);
+          console.warn('[Announcer] MP3 çalma uyarısı (' + filename + '):', err.message);
         });
       }
     }
   } catch (err) {
-    console.warn('[Announcer] MP3 ?al?namad?:', err);
+    console.warn('[Announcer] MP3 çalınamadı:', err);
   }
 }
 
@@ -47,7 +47,7 @@ export function playUnmuteSound() {
   playSoundFile('unmute.mp3');
 }
 
-// 3. Biri Ayr?l?nca / Ba?lant? Kesilince (/sounds/someone-left.mp3)
+// 3. Biri Ayrılınca / Bağlantı Kesilince (/sounds/someone-left.mp3)
 export function playSomeoneLeftSound() {
   playSoundFile('someone-left.mp3');
 }
@@ -76,11 +76,11 @@ export function unregisterPeerName(peerId) {
 }
 
 export function getPeerName(peerId) {
-  return nameCache.get(peerId) || 'Bir s?r?c?';
+  return nameCache.get(peerId) || 'Bir sürücü';
 }
 
 /**
- * Motosiklet kask ikaz tonu (?ift bip)
+ * Motosiklet kask ikaz tonu (çift bip)
  */
 export function playAlertTone(type = 'beep') {
   try {
@@ -105,12 +105,12 @@ export function playAlertTone(type = 'beep') {
       osc.stop(now + 0.4);
     }
   } catch (err) {
-    console.warn('[Announcer] ?kaz tonu hatas?:', err);
+    console.warn('[Announcer] İkaz tonu hatası:', err);
   }
 }
 
 /**
- * T?rk?e TTS metin anonsu yapar
+ * Türkçe TTS metin anonsu yapar
  */
 export function speakText(text) {
   if (!isSpeechAvailable || !text) return;
@@ -132,7 +132,7 @@ export function speakText(text) {
 
     window.speechSynthesis.speak(utterance);
   } catch (err) {
-    console.warn('[Announcer] TTS hatas?:', err);
+    console.warn('[Announcer] TTS hatası:', err);
   }
 }
 
@@ -140,17 +140,17 @@ export function announceJoin(peerId, name) {
   if (name) registerPeerName(peerId, name);
   const riderName = name || getPeerName(peerId);
   playUnmuteSound();
-  speakText(riderName + ' interkoma kat?ld?');
+  speakText(riderName + ' interkoma katıldı');
 }
 
 export function announceDisconnect(peerId) {
   const riderName = getPeerName(peerId);
   playSomeoneLeftSound();
-  speakText(riderName + ' ba?lant?s? koptu');
+  speakText(riderName + ' bağlantısı koptu');
 }
 
 export function announceReconnect(peerId) {
   const riderName = getPeerName(peerId);
   playUnmuteSound();
-  speakText(riderName + ' tekrar ba?land?');
+  speakText(riderName + ' tekrar bağlandı');
 }

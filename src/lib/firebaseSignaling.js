@@ -1,4 +1,4 @@
-﻿// Firebase Realtime Database tabanlı WebRTC Sinyalleşme İstemcisi
+// Firebase Realtime Database tabanlı WebRTC Sinyalleşme İstemcisi
 // Tamamen serverless çalışır, harici Node.js / WebSocket sunucusu gerektirmez.
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -44,7 +44,7 @@ export class FirebaseSignalingClient {
   constructor() {
     this.app = null;
     this.db = null;
-    this.peerId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'peer_' + Math.random().toString(36).substring(2, 11);
+    this.peerId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `peer_${Math.random().toString(36).substring(2, 11)}`;
     this.currentRoom = null;
     this.listeners = new Map();
     this.activeUnsubscribers = [];
@@ -75,7 +75,7 @@ export class FirebaseSignalingClient {
         try {
           cb(data);
         } catch (err) {
-          console.error('[FirebaseSignaling] Event handler hatası (' + event + '):', err);
+          console.error(`[FirebaseSignaling] Event handler hatası (${event}):`, err);
         }
       });
     }
@@ -93,7 +93,7 @@ export class FirebaseSignalingClient {
       return true;
     } catch (err) {
       console.error('[FirebaseSignaling] Firebase başlatma hatası:', err);
-      this.emit('error', { message: 'Firebase bağlantısı kurulamadı: ' + err.message });
+      this.emit('error', { message: `Firebase bağlantısı kurulamadı: ${err.message}` });
       throw err;
     }
   }
@@ -106,7 +106,7 @@ export class FirebaseSignalingClient {
       const code = generateRoomCode();
       this.currentRoom = code;
 
-      const peerRef = ref(this.db, 'rooms/' + code + '/peers/' + this.peerId);
+      const peerRef = ref(this.db, `rooms/${code}/peers/${this.peerId}`);
 
       // Kurucu peer bilgisini oluştur
       await set(peerRef, {
@@ -123,7 +123,7 @@ export class FirebaseSignalingClient {
       this.listenToRoomSignals(code);
       this.listenToPeers(code);
 
-      console.log('[FirebaseSignaling] Oda Oluşturuldu: ' + code + ' | Kurucu: ' + peerName);
+      console.log(`[FirebaseSignaling] Oda Oluşturuldu: ${code} | Kurucu: ${peerName}`);
 
       this.emit('room-created', {
         type: 'room-created',
@@ -133,7 +133,7 @@ export class FirebaseSignalingClient {
       });
     } catch (err) {
       console.error('[FirebaseSignaling] Oda oluşturulamadı:', err);
-      this.emit('error', { message: 'Oda oluşturulamadı: ' + err.message });
+      this.emit('error', { message: `Oda oluşturulamadı: ${err.message}` });
     }
   }
 
@@ -145,11 +145,11 @@ export class FirebaseSignalingClient {
       const peerName = (name || 'Sürücü').trim();
       this.currentRoom = targetCode;
 
-      const roomPeersRef = ref(this.db, 'rooms/' + targetCode + '/peers');
+      const roomPeersRef = ref(this.db, `rooms/${targetCode}/peers`);
       const snapshot = await get(roomPeersRef);
 
       if (!snapshot.exists()) {
-        this.emit('error', { message: 'Oda bulunamadı (#' + targetCode + '). Lütfen kodu kontrol edin.' });
+        this.emit('error', { message: `Oda bulunamadı (#${targetCode}). Lütfen kodu kontrol edin.` });
         return;
       }
 
@@ -159,7 +159,7 @@ export class FirebaseSignalingClient {
         name: p.name,
       }));
 
-      const myPeerRef = ref(this.db, 'rooms/' + targetCode + '/peers/' + this.peerId);
+      const myPeerRef = ref(this.db, `rooms/${targetCode}/peers/${this.peerId}`);
       await set(myPeerRef, {
         id: this.peerId,
         name: peerName,
@@ -182,15 +182,15 @@ export class FirebaseSignalingClient {
         existingPeers,
       });
 
-      console.log('[FirebaseSignaling] Odaya Katılındı: ' + targetCode + ' | İsim: ' + peerName);
+      console.log(`[FirebaseSignaling] Odaya Katılındı: ${targetCode} | İsim: ${peerName}`);
     } catch (err) {
       console.error('[FirebaseSignaling] Odaya katılım hatası:', err);
-      this.emit('error', { message: 'Odaya katılırken hata oluştu: ' + err.message });
+      this.emit('error', { message: `Odaya katılırken hata oluştu: ${err.message}` });
     }
   }
 
   listenToPeers(roomCode) {
-    const peersRef = ref(this.db, 'rooms/' + roomCode + '/peers');
+    const peersRef = ref(this.db, `rooms/${roomCode}/peers`);
 
     const unsubAdded = onChildAdded(peersRef, (snapshot) => {
       const p = snapshot.val();
@@ -218,7 +218,7 @@ export class FirebaseSignalingClient {
   }
 
   listenToRoomSignals(roomCode) {
-    const mySignalsRef = ref(this.db, 'rooms/' + roomCode + '/signals/' + this.peerId);
+    const mySignalsRef = ref(this.db, `rooms/${roomCode}/signals/${this.peerId}`);
 
     const unsubSignal = onChildAdded(mySignalsRef, (snapshot) => {
       const signalData = snapshot.val();
@@ -239,10 +239,10 @@ export class FirebaseSignalingClient {
     if (!this.db || !this.currentRoom || !targetPeerId) return;
 
     try {
-      const targetSignalsRef = ref(this.db, 'rooms/' + this.currentRoom + '/signals/' + targetPeerId);
+      const targetSignalsRef = ref(this.db, `rooms/${this.currentRoom}/signals/${targetPeerId}`);
       await push(targetSignalsRef, {
         fromPeerId: this.peerId,
-        data: data,
+        data,
         timestamp: Date.now(),
       });
     } catch (err) {
@@ -253,10 +253,10 @@ export class FirebaseSignalingClient {
   async leaveRoom() {
     if (this.currentRoom && this.db) {
       try {
-        const myPeerRef = ref(this.db, 'rooms/' + this.currentRoom + '/peers/' + this.peerId);
+        const myPeerRef = ref(this.db, `rooms/${this.currentRoom}/peers/${this.peerId}`);
         await remove(myPeerRef);
 
-        const mySignalsRef = ref(this.db, 'rooms/' + this.currentRoom + '/signals/' + this.peerId);
+        const mySignalsRef = ref(this.db, `rooms/${this.currentRoom}/signals/${this.peerId}`);
         await remove(mySignalsRef);
       } catch (_) {}
     }

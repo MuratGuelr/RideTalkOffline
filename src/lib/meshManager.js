@@ -181,7 +181,6 @@ export class MeshManager {
 
     dc.onopen = () => {
       console.log(`[DataChannel] Peer ile doğrudan kontrol kanalı açıldı: ${peerId}`);
-      // İlk mikrofon durumunu bildir
       dc.send(JSON.stringify({ type: 'mic-state', isMuted: this.isMuted }));
     };
 
@@ -295,7 +294,6 @@ export class MeshManager {
         const offer = await pc.createOffer({ iceRestart: true });
         await pc.setLocalDescription(offer);
 
-        // 1. DataChannel açık ise doğrudan karşı tarafa ilet (tam internetsiz mod)
         if (entry.dataChannel && entry.dataChannel.readyState === 'open') {
           entry.dataChannel.send(
             JSON.stringify({
@@ -305,7 +303,6 @@ export class MeshManager {
           );
         }
 
-        // 2. İnternet hâlâ varsa sinyal sunucusuna da yolla
         this.sendSignal(peerId, { sdp: offer });
       } catch (err) {
         console.warn(`[MeshManager] ICE Restart hatası (${peerId}):`, err);
@@ -321,7 +318,6 @@ export class MeshManager {
       });
     }
 
-    // Durumu tüm peerlara DataChannel ile anında bildir
     this.broadcastDataChannel({
       type: 'mic-state',
       isMuted,
@@ -358,7 +354,6 @@ export class MeshManager {
     }
   }
 
-  // getStats() ile RTT, paket kaybı ve yerel hotspot (host candidate) tespiti
   startStatsMonitoring() {
     if (this.statsInterval) clearInterval(this.statsInterval);
 

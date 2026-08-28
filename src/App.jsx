@@ -29,7 +29,7 @@ export default function App() {
   const [initialRoomCode, setInitialRoomCode] = useState('');
   const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
 
-  // Active Intercom States
+  // Aktif İnterkom Durumları
   const [peers, setPeers] = useState({}); // peerId -> { name, state, isMuted, stats }
   const [localVolume, setLocalVolume] = useState(0);
   const [localIsSpeaking, setLocalIsSpeaking] = useState(false);
@@ -40,7 +40,7 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [toastMessage, setToastMessage] = useState(null);
 
-  // Audio gesture unlock helper for mobile browsers (iOS Safari / Chrome)
+  // Mobil tarayıcılar (iOS Safari / Chrome) için ses kilidi açıcı
   const [audioUnlocked, setAudioUnlocked] = useState(false);
 
   const signalingRef = useRef(null);
@@ -57,20 +57,19 @@ export default function App() {
     }, 4000);
   }, []);
 
-  // Prevent accidental back navigation / reload when in active room
+  // Aktif odadayken yanlışlıkla geri çıkmayı veya sayfayı kapatmayı önleyen güvenlik koruması
   useEffect(() => {
     if (view === 'active') {
       const handleBeforeUnload = (e) => {
         e.preventDefault();
-        e.returnValue = '?nterkom oturumu aktif. Ayr?lmak istedi?inize emin misiniz?';
+        e.returnValue = 'İnterkom oturumu aktif. Ayrılmak istediğinize emin misiniz?';
         return e.returnValue;
       };
       window.addEventListener('beforeunload', handleBeforeUnload);
 
-      // Push history state to intercept mobile swipe-back and back button
       window.history.pushState({ ridetalk: 'active' }, '');
       const handlePopState = () => {
-        if (window.confirm('?nterkom odas?ndan ayr?lmak istiyor musunuz?')) {
+        if (window.confirm('İnterkom odasından ayrılmak istiyor musunuz?')) {
           handleLeaveRoomDirect();
         } else {
           window.history.pushState({ ridetalk: 'active' }, '');
@@ -85,7 +84,7 @@ export default function App() {
     }
   }, [view]);
 
-  // Check URL query parameters for direct invite links (e.g. ?room=BOLU7F)
+  // URL parametresinde oda kodu kontrolü (?room=BOLU7F)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
@@ -97,14 +96,14 @@ export default function App() {
     }
   }, []);
 
-  // WakeLock status listener
+  // WakeLock durum dinleyicisi
   useEffect(() => {
     onWakeLockStatusChange((active) => {
       setIsWakeLockActive(active);
     });
   }, []);
 
-  // Online / Offline monitor
+  // Çevrimiçi / Çevrimdışı izleyici
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -118,38 +117,38 @@ export default function App() {
     };
   }, []);
 
-  // Unlock AudioContext on first user tap (critical for iOS Safari TTS & Web Audio)
+  // İlk kullanıcı dokunuşunda AudioContext kilidini aç
   const ensureAudioUnlocked = () => {
     if (!audioUnlocked) {
-      playAlertTone('connect');
+      playAlertTone('horn');
       setAudioUnlocked(true);
     }
   };
 
-  // Helper to get or instantiate SignalingClient
+  // Sinyal istemcisini örneklendir (Firebase öncelikli, yoksa WebSocket)
   const getSignalingClient = useCallback(() => {
     if (!signalingRef.current) {
       if (isFirebaseConfigured()) {
-        console.log('[App] Sinyallesme: Firebase Realtime Database (Serverless) ⚡');
+        console.log('[App] Sinyalleşme Motoru: Firebase Realtime Database (Serverless) ⚡');
         signalingRef.current = new FirebaseSignalingClient();
       } else {
-        console.log('[App] Sinyallesme: WebSocket Sunucusu 📡');
+        console.log('[App] Sinyalleşme Motoru: WebSocket Sunucusu 📡');
         signalingRef.current = new SignalingClient();
       }
     }
     return signalingRef.current;
   }, []);
 
-  // Initialize MeshManager and setup WebRTC listeners
+  // WebRTC Mesh oturumu başlatma
   const startMeshSession = useCallback(
     async (currentRoomData, existingPeers = []) => {
       try {
         const signaling = getSignalingClient();
 
-        // Screen Wake Lock
+        // Ekran kilidini al
         await keepScreenAwake();
 
-        // Mesh Manager Instance
+        // Mesh Yöneticisi
         const mesh = new MeshManager({
           sendSignal: (targetPeerId, data) => {
             signaling.sendSignal(targetPeerId, data);
@@ -176,6 +175,7 @@ export default function App() {
             setLocalIsSpeaking(isSpeaking);
           },
           onPeerDisconnect: (peerId) => {
+            playSomeoneLeftSound();
             announceDisconnect(peerId);
             showToast(`${peers[peerId]?.name || 'Sürücü'} bağlantısı koptu`);
           },
@@ -194,17 +194,17 @@ export default function App() {
 
         meshRef.current = mesh;
 
-        // Initialize Microphone
+        // Mikrofonu başlat
         await mesh.init();
 
-        // Connect to existing peers if we are the joiner
+        // Katılan bizsek odadaki mevcut herkese teklif gönder
         if (existingPeers && existingPeers.length > 0) {
           for (const p of existingPeers) {
             await mesh.connectToPeer(p.id, p.name);
           }
         }
 
-        // Watch network changes for Hotspot / Wi-Fi switch -> triggers ICE Restart
+        // Ağ değişimlerini izle -> ICE Restart
         const unwatchNetwork = watchNetworkChanges(() => {
           if (meshRef.current) {
             meshRef.current.restartIceForAllPeers();
@@ -221,7 +221,7 @@ export default function App() {
     [getSignalingClient, peers, showToast]
   );
 
-  // Setup Signaling Listeners
+  // Sinyalleşme olaylarını dinle
   const bindSignalingEvents = useCallback(
     (signaling) => {
       signaling.on('peer-joined', async (msg) => {
@@ -241,7 +241,7 @@ export default function App() {
       });
 
       signaling.on('peer-left', (msg) => {
-        console.log('[App] S?r?c? ayr?ld?:', msg);
+        console.log('[App] Sürücü ayrıldı:', msg);
         playSomeoneLeftSound();
         announceDisconnect(msg.peerId);
         showToast(`${msg.name || 'Sürücü'} odadan ayrıldı`);
@@ -265,7 +265,7 @@ export default function App() {
     [showToast]
   );
 
-  // Handler: Create Room
+  // Oda Oluştur
   const handleStartRoom = async (name) => {
     try {
       setError(null);
@@ -287,12 +287,12 @@ export default function App() {
 
       signaling.createRoom(name);
     } catch (err) {
-      setError('Oda oluşturulurken hata meydana geldi: ' + err.message);
+      setError(`Oda oluşturulurken hata meydana geldi: ${err.message}`);
       setIsConnecting(false);
     }
   };
 
-  // Handler: Enter Active Cockpit from Create Screen
+  // Aktif Kokpite Gir
   const handleEnterActiveCockpit = async () => {
     try {
       setIsConnecting(true);
@@ -306,7 +306,7 @@ export default function App() {
     }
   };
 
-  // Handler: Join Room
+  // Odaya Katıl
   const handleJoinRoom = async (code, name) => {
     try {
       setError(null);
@@ -338,23 +338,27 @@ export default function App() {
 
       signaling.joinRoom(code, name);
     } catch (err) {
-      setError('Odaya katılırken hata meydana geldi: ' + err.message);
+      setError(`Odaya katılırken hata meydana geldi: ${err.message}`);
       setIsConnecting(false);
     }
   };
 
-  // Handler: Mute / Unmute
+  // Mikrofon Aç / Kapat
   const handleToggleMute = () => {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
     if (meshRef.current) {
       meshRef.current.setMute(nextMuted);
     }
-    playAlertTone(nextMuted ? 'disconnect' : 'connect');
+    if (nextMuted) {
+      playMuteSound();
+    } else {
+      playUnmuteSound();
+    }
     showToast(nextMuted ? 'Mikrofon Kapatıldı' : 'Mikrofon Açık');
   };
 
-  // Handler: Horn / Helmet Chime
+  // İkaz Tonu Gönder
   const handleSendHorn = () => {
     if (meshRef.current) {
       meshRef.current.sendHornAlert();
@@ -363,33 +367,35 @@ export default function App() {
     }
   };
 
-  // Handler: Leave Room
-  const handleLeaveRoom = () => {
-    if (window.confirm('İnterkom odasından ayrılmak istiyor musunuz?')) {
-      if (meshRef.current) {
-        meshRef.current.destroy();
-        meshRef.current = null;
-      }
-      if (signalingRef.current) {
-        signalingRef.current.leaveRoom();
-        signalingRef.current.disconnect();
-        signalingRef.current = null;
-      }
-      releaseScreenAwake();
-      setPeers({});
-      setRoomData(null);
-      setView('home');
-      showToast('İnterkomdan ayrıldınız');
+  // Odadan Ayrıl
+  const handleLeaveRoomDirect = () => {
+    if (meshRef.current) {
+      meshRef.current.destroy();
+      meshRef.current = null;
     }
+    if (signalingRef.current) {
+      signalingRef.current.leaveRoom();
+      signalingRef.current.disconnect();
+      signalingRef.current = null;
+    }
+    releaseScreenAwake();
+    setPeers({});
+    setRoomData(null);
+    setView('home');
+    showToast('İnterkomdan ayrıldınız');
+  };
+
+  const handleLeaveRoom = () => {
+    handleLeaveRoomDirect();
   };
 
   return (
     <div className="app-container" onClick={ensureAudioUnlocked}>
-      {/* Background Ambience / Glow */}
+      {/* Arka Plan Neon Efektleri */}
       <div className="ambient-glow cyan-glow"></div>
       <div className="ambient-glow orange-glow"></div>
 
-      {/* LOBBY / HOME VIEW */}
+      {/* LOBBY / GİRİŞ EKRANI */}
       {view === 'home' && (
         <div className="lobby-wrapper animate-fade-in">
           <header className="lobby-brand">
@@ -468,7 +474,7 @@ export default function App() {
         </div>
       )}
 
-      {/* SERVER SETTINGS MODAL */}
+      {/* SUNUCU AYARLARI MODALI */}
       <ServerSettingsModal
         isOpen={isServerSettingsOpen}
         onClose={() => setIsServerSettingsOpen(false)}
@@ -481,7 +487,7 @@ export default function App() {
         }}
       />
 
-      {/* CREATE ROOM VIEW */}
+      {/* ODA OLUŞTURMA EKRANI */}
       {view === 'create' && (
         <div className="view-wrapper animate-fade-in">
           <RoomCreate
@@ -495,7 +501,7 @@ export default function App() {
         </div>
       )}
 
-      {/* JOIN ROOM VIEW */}
+      {/* ODAYA KATILMA EKRANI */}
       {view === 'join' && (
         <div className="view-wrapper animate-fade-in">
           <RoomJoin
@@ -508,7 +514,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ACTIVE COCKPIT HUD VIEW */}
+      {/* AKTİF KOKPİT HUD GÖRÜNÜMÜ */}
       {view === 'active' && roomData && (
         <ActiveRoom
           roomCode={roomData.roomCode}

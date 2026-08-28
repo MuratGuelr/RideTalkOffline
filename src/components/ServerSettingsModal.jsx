@@ -31,19 +31,19 @@ export default function ServerSettingsModal({ isOpen, onClose, onSave }) {
   };
 
   return (
-    <div className="modal-overlay">
+    <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-content">
         <div className="modal-header">
           <div className="modal-title">
             <Server size={20} className="icon-neon" />
             <span>Sinyal Sunucusu Ayarları</span>
           </div>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={onClose} aria-label="Kapat">
             <X size={20} />
           </button>
         </div>
 
-        <form onSubmit={handleSave} className="p-4 flex flex-col gap-4">
+        <form onSubmit={handleSave} className="modal-scrollable-body p-4 flex flex-col gap-4">
           <div className="input-field-group">
             <label htmlFor="server-url-input" className="input-label">
               WebSocket Sunucu Adresi (WSS / WS)
@@ -57,7 +57,7 @@ export default function ServerSettingsModal({ isOpen, onClose, onSave }) {
               onChange={(e) => setServerUrl(e.target.value)}
             />
             <span className="text-xs text-muted" style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '4px' }}>
-              Vercel üzerinde barındırırken Render, Railway veya Fly.io üzerindeki WebSocket sunucu adresinizi buraya yazabilirsiniz.
+              Vercel üzerinde barındırırken Render, Railway veya Fly.io üzerindeki WebSocket sunucu adresinizi buraya yazabilirsiniz. Firebase kullanıyorsanız burayı boş bırakabilirsiniz.
             </span>
           </div>
 

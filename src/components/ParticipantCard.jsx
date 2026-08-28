@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mic, MicOff, Signal, Wifi, Radio, User } from 'lucide-react';
+import { Mic, MicOff, Wifi, Radio, User } from 'lucide-react';
 
 export default function ParticipantCard({
   name,
@@ -12,15 +12,12 @@ export default function ParticipantCard({
 }) {
   const isConnected = connectionState === 'connected';
   const isReconnecting = connectionState === 'reconnecting';
-  const isFailed = connectionState === 'failed';
 
   return (
     <div
-      className={`rider-card ${isSelf ? 'rider-self' : ''} ${
-        isSpeaking && !isMuted ? 'rider-speaking' : ''
-      } ${!isConnected ? 'rider-disconnected' : ''}`}
+      className={`rider-card ${isSelf ? 'rider-self ' : ''}${isSpeaking && !isMuted ? 'rider-speaking ' : ''}${!isConnected ? 'rider-disconnected' : ''}`}
     >
-      {/* Speaking Pulse Glow Effect */}
+      {/* Konuşma Parlama Halkası */}
       {isSpeaking && !isMuted && <div className="speaking-glow-ring"></div>}
 
       <div className="rider-avatar-wrapper">
@@ -28,9 +25,7 @@ export default function ParticipantCard({
           <User size={28} />
         </div>
         <div
-          className={`rider-status-dot ${
-            isConnected ? 'dot-connected' : isReconnecting ? 'dot-reconnecting' : 'dot-failed'
-          }`}
+          className={`rider-status-dot ${isConnected ? 'dot-connected' : isReconnecting ? 'dot-reconnecting' : 'dot-failed'}`}
           title={isConnected ? 'Bağlı' : isReconnecting ? 'Yeniden Bağlanıyor...' : 'Bağlantı Koptu'}
         />
       </div>
@@ -51,7 +46,7 @@ export default function ParticipantCard({
           )}
         </div>
 
-        {/* Real-time Voice Wave Volume Bar */}
+        {/* Canlı Ses Seviyesi Çubuğu */}
         <div className="rider-volume-track">
           <div
             className="rider-volume-fill"
@@ -62,7 +57,7 @@ export default function ParticipantCard({
           />
         </div>
 
-        {/* Latency and Network Info */}
+        {/* Gecikme ve Ağ Bilgisi */}
         <div className="rider-meta-row">
           {isConnected ? (
             <>

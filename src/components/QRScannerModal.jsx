@@ -57,13 +57,11 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
         });
 
         if (code && code.data) {
-          // URL veya doğrudan oda kodu tespiti
           let foundCode = code.data.trim();
           if (foundCode.includes('room=')) {
             const urlParams = new URLSearchParams(foundCode.split('?')[1]);
             foundCode = urlParams.get('room') || foundCode;
           } else if (foundCode.length > 6) {
-            // Son 6 karakter kodu olabilir
             const parts = foundCode.split('/');
             foundCode = parts[parts.length - 1];
           }
@@ -103,19 +101,19 @@ export default function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay">
+    <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-content scanner-modal">
         <div className="modal-header">
           <div className="modal-title">
             <Camera size={20} className="icon-neon" />
             <span>QR Kod Okuyucu</span>
           </div>
-          <button type="button" className="btn-close" onClick={onClose}>
+          <button type="button" className="btn-close" onClick={onClose} aria-label="Kapat">
             <X size={20} />
           </button>
         </div>
 
-        <div className="scanner-body">
+        <div className="scanner-body modal-scrollable-body">
           {error ? (
             <div className="scanner-error">
               <AlertCircle size={32} />
