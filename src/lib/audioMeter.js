@@ -1,10 +1,25 @@
-// Web Audio API Analyser tabanlı gerçek zamanlı ses seviyesi ve konuşma algılama modülü
+// Web Audio API Analyser tabanlı ultra-hafif ses seviyesi göstergesi
+// Ses akışına müdahale etmez, tamponlama veya gecikme yaratmaz.
+
+let sharedAudioCtx = null;
+
+function getSharedAudioContext() {
+  if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      sharedAudioCtx = new AudioContextClass({ latencyHint: 'interactive' });
+    }
+  }
+  if (sharedAudioCtx && sharedAudioCtx.state === 'suspended') {
+    sharedAudioCtx.resume().catch(() => {});
+  }
+  return sharedAudioCtx;
+}
 
 export class AudioLevelMeter {
   constructor(stream, onLevelChange) {
     this.stream = stream;
     this.onLevelChange = onLevelChange;
-    this.audioCtx = null;
     this.source = null;
     this.analyser = null;
     this.animationId = null;
@@ -17,49 +32,46 @@ export class AudioLevelMeter {
     try {
       if (!this.stream || this.stream.getAudioTracks().length === 0) return;
 
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) return;
+      const audioCtx = getSharedAudioContext();
+      if (!audioCtx) return;
 
-      this.audioCtx = new AudioContextClass();
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-
-      this.source = this.audioCtx.createMediaStreamSource(this.stream);
-      this.analyser = this.audioCtx.createAnalyser();
-      this.analyser.fftSize = 256;
-      this.analyser.smoothingTimeConstant = 0.5;
+      this.source = audioCtx.createMediaStreamSource(this.stream);
+      this.analyser = audioCtx.createAnalyser();
+      this.analyser.fftSize = 64; // Ultra hızlı, minik 32-bin FFT
+      this.analyser.smoothingTimeConstant = 0.3;
 
       this.source.connect(this.analyser);
 
       const bufferLength = this.analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
+      let lastCheck = 0;
 
-      const update = () => {
+      const update = (time) => {
         if (this.isDestroyed) return;
 
-        this.analyser.getByteFrequencyData(dataArray);
+        // Saniyede 15 kare güncelle (CPU ve ses işlemcisini yormamak için)
+        if (time - lastCheck > 65) {
+          lastCheck = time;
+          this.analyser.getByteFrequencyData(dataArray);
 
-        // Ortalama RMS genliği hesapla
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / bufferLength; // 0..255
-        const normalized = Math.min(100, Math.round((avg / 128) * 100)); // 0..100%
-        const isSpeaking = normalized > 12; // Eşik değer
+          let sum = 0;
+          for (let i = 0; i < bufferLength; i++) {
+            sum += dataArray[i];
+          }
+          const avg = sum / bufferLength;
+          const normalized = Math.min(100, Math.round((avg / 128) * 100));
+          const isSpeaking = normalized > 12;
 
-        if (this.onLevelChange) {
-          this.onLevelChange(normalized, isSpeaking);
+          if (this.onLevelChange) {
+            this.onLevelChange(normalized, isSpeaking);
+          }
         }
 
         this.animationId = requestAnimationFrame(update);
       };
 
-      update();
-    } catch (err) {
-      console.warn('[AudioLevelMeter] Başlatılamadı:', err.message);
-    }
+      this.animationId = requestAnimationFrame(update);
+    } catch (_) {}
   }
 
   destroy() {
@@ -71,11 +83,7 @@ export class AudioLevelMeter {
       try {
         this.source.disconnect();
       } catch (_) {}
-    }
-    if (this.audioCtx && this.audioCtx.state !== 'closed') {
-      try {
-        this.audioCtx.close();
-      } catch (_) {}
+      this.source = null;
     }
   }
 }

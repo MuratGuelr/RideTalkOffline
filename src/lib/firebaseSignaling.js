@@ -115,21 +115,18 @@ export class FirebaseSignalingClient {
       if (snapshot.exists()) {
         const peersObj = snapshot.val() || {};
         Object.values(peersObj).forEach((p) => {
-          // 2 dakikadan eski hayalet kullanıcıları ele
           if (p && p.id && p.id !== this.peerId) {
             const isRecent = !p.lastSeen || now - p.lastSeen < 120000;
             if (isRecent) {
               this.knownPeers.add(p.id);
               existingPeers.push({ id: p.id, name: p.name || 'Sürücü' });
             } else {
-              // Eski kaydı temizle
               remove(ref(this.db, `rooms/${targetRoom}/peers/${p.id}`)).catch(() => {});
             }
           }
         });
       }
 
-      // Kendi kaydımızı oluştur
       const myPeerRef = ref(this.db, `rooms/${targetRoom}/peers/${this.peerId}`);
       await set(myPeerRef, {
         id: this.peerId,
@@ -138,14 +135,11 @@ export class FirebaseSignalingClient {
         lastSeen: now,
       });
 
-      // Bağlantı koparsa Realtime DB otomatik temizlesin
       onDisconnect(myPeerRef).remove();
 
-      // Sinyal ve katılımcı dinleyicilerini başlat
       this.listenToRoomSignals(targetRoom);
       this.listenToPeers(targetRoom);
 
-      // Heartbeat: Her 30 saniyede bir lastSeen güncelle
       if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = setInterval(() => {
         if (this.db && this.currentRoom) {
@@ -155,7 +149,7 @@ export class FirebaseSignalingClient {
         }
       }, 30000);
 
-      console.log(`[FirebaseSignaling] ✅ Gruba Katılındı: ${targetRoom} | İsim: ${peerName} | Mevcut Sürücüler:`, existingPeers);
+      console.log(`[FirebaseSignaling] ✅ Gruba Katılındı: ${targetRoom} | İsim: ${peerName}`);
 
       this.emit('joined', {
         type: 'joined',
@@ -185,7 +179,6 @@ export class FirebaseSignalingClient {
       const p = snapshot.val();
       if (p && p.id && p.id !== this.peerId && !this.knownPeers.has(p.id)) {
         this.knownPeers.add(p.id);
-        console.log(`[FirebaseSignaling] 🏍️ Yeni sürücü odaya girdi: ${p.name} (${p.id})`);
         this.emit('peer-joined', {
           type: 'peer-joined',
           peerId: p.id,
@@ -199,7 +192,6 @@ export class FirebaseSignalingClient {
       const removedId = p?.id || snapshot.key;
       if (removedId && removedId !== this.peerId) {
         this.knownPeers.delete(removedId);
-        console.log(`[FirebaseSignaling] ❌ Sürücü ayrıldı: ${p?.name || removedId}`);
         this.emit('peer-left', {
           type: 'peer-left',
           peerId: removedId,
@@ -240,33 +232,40 @@ export class FirebaseSignalingClient {
         data: cleanData,
         timestamp: Date.now(),
       });
-    } catch (err) {
-      console.error('[FirebaseSignaling] Sinyal gönderme hatası:', err);
-    }
+    } catch (_) {}
   }
 
-  async leaveRoom() {
+  // ⭐ İNTERNET OLMASA DAHİ 0ms ANINDA AYRILMA (HİÇBİR ZAMAN KİLİTLENMEZ)
+  leaveRoom() {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
 
-    if (this.currentRoom && this.db) {
-      try {
-        const myPeerRef = ref(this.db, `rooms/${this.currentRoom}/peers/${this.peerId}`);
-        await remove(myPeerRef);
+    const roomToLeave = this.currentRoom;
+    const peerToLeave = this.peerId;
+    const dbInstance = this.db;
 
-        const mySignalsRef = ref(this.db, `rooms/${this.currentRoom}/signals/${this.peerId}`);
-        await remove(mySignalsRef);
-      } catch (_) {}
-    }
-
+    // Yerel dinleyicileri ve durumu ANINDA temizle
     this.activeUnsubscribers.forEach((unsub) => {
-      if (typeof unsub === 'function') unsub();
+      if (typeof unsub === 'function') {
+        try { unsub(); } catch (_) {}
+      }
     });
     this.activeUnsubscribers = [];
     this.knownPeers.clear();
     this.currentRoom = null;
+
+    // Arka planda Firebase'i temizlemeyi dene (asenkron & bloke etmeden)
+    if (roomToLeave && dbInstance) {
+      try {
+        const myPeerRef = ref(dbInstance, `rooms/${roomToLeave}/peers/${peerToLeave}`);
+        remove(myPeerRef).catch(() => {});
+
+        const mySignalsRef = ref(dbInstance, `rooms/${roomToLeave}/signals/${peerToLeave}`);
+        remove(mySignalsRef).catch(() => {});
+      } catch (_) {}
+    }
   }
 
   disconnect() {

@@ -61,26 +61,32 @@ export default function App() {
   }, []);
 
   const handleLeaveRoomDirect = useCallback(() => {
+    // 1. ANINDA Arayüzü Ana Sayfaya Döndür (0ms)
+    setView('home');
+    setRoomData(null);
+    setPeers({});
+    showToast('İnterkomdan ayrıldınız');
+
+    // 2. Ses ve Donanım Kaynaklarını Kapat
     if (meshRef.current) {
-      meshRef.current.destroy();
+      try {
+        meshRef.current.destroy();
+      } catch (_) {}
       meshRef.current = null;
     }
     if (signalingRef.current) {
       try {
-        if (signalingRef.current.leaveRoom) signalingRef.current.leaveRoom();
         signalingRef.current.disconnect();
       } catch (_) {}
       signalingRef.current = null;
     }
     if (unwatchNetworkRef.current) {
-      unwatchNetworkRef.current();
+      try {
+        unwatchNetworkRef.current();
+      } catch (_) {}
       unwatchNetworkRef.current = null;
     }
     releaseScreenAwake();
-    setPeers({});
-    setRoomData(null);
-    setView('home');
-    showToast('İnterkomdan ayrıldınız');
   }, [showToast]);
 
   // Geri tuşu koruması
