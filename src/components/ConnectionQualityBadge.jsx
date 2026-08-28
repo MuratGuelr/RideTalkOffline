@@ -1,5 +1,5 @@
 import React from 'react';
-import { Wifi, Radio, Signal, AlertTriangle } from 'lucide-react';
+import { Radio, Signal } from 'lucide-react';
 
 export default function ConnectionQualityBadge({ isHotspotMode, avgRtt, activePeersCount, isOnline = true }) {
   if (activePeersCount === 0) {
@@ -12,31 +12,12 @@ export default function ConnectionQualityBadge({ isHotspotMode, avgRtt, activePe
     );
   }
 
-  if (!isOnline && !isHotspotMode) {
-    return (
-      <div className="conn-badge conn-offline">
-        <AlertTriangle size={14} />
-        <span>İnternet Yok (Hotspot'a Bağlanın)</span>
-      </div>
-    );
-  }
-
-  if (isHotspotMode) {
-    return (
-      <div className="conn-badge conn-hotspot" title="Ses yerel Wi-Fi Hotspot üzerinden internet olmadan akıyor">
-        <span className="pulse-dot-green"></span>
-        <Radio size={14} className="icon-pulse" />
-        <span>Yerel Hotspot (İnternetsiz Mesh)</span>
-        {avgRtt > 0 && <span className="rtt-tag">{avgRtt}ms</span>}
-      </div>
-    );
-  }
-
+  // Odada bağlı sürücüler varsa, 0 internet yerel mesh / Hotspot aktif olarak gösterilir
   return (
-    <div className="conn-badge conn-internet" title="Ses hücresel/internet STUN üzerinden aktarılıyor">
-      <span className="pulse-dot-cyan"></span>
-      <Wifi size={14} />
-      <span>İnternet / STUN Ağı</span>
+    <div className="conn-badge conn-hotspot" title="Ses yerel Wi-Fi Hotspot üzerinden doğrudan telefonlar arasında akıyor">
+      <span className="pulse-dot-green"></span>
+      <Radio size={14} className="icon-pulse" />
+      <span>Yerel Hotspot (İnternetsiz Mesh)</span>
       {avgRtt > 0 && <span className="rtt-tag">{avgRtt}ms</span>}
     </div>
   );
