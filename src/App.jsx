@@ -6,6 +6,7 @@ import OfflineQRHandshakeModal from './components/OfflineQRHandshakeModal.jsx';
 import ServerSettingsModal from './components/ServerSettingsModal.jsx';
 import { SignalingClient } from './lib/signaling.js';
 import { FirebaseSignalingClient, isFirebaseConfigured } from './lib/firebaseSignaling.js';
+import { LocalSignalingClient } from './lib/localSignaling.js';
 import { MeshManager } from './lib/meshManager.js';
 import {
   announceJoin, announceDisconnect, announceReconnect,
@@ -14,7 +15,7 @@ import {
 } from './lib/announcer.js';
 import { keepScreenAwake, releaseScreenAwake, onWakeLockStatusChange } from './lib/wakeLock.js';
 import { watchNetworkChanges } from './lib/networkWatcher.js';
-import { Radio, PlusCircle, LogIn, Shield, WifiOff, Volume2, Settings, QrCode } from 'lucide-react';
+import { Radio, PlusCircle, LogIn, Shield, WifiOff, Volume2, Settings, Wifi, Zap } from 'lucide-react';
 import './App.css';
 
 export default function App() {
@@ -24,8 +25,6 @@ export default function App() {
   const [error, setError] = useState(null);
   const [initialRoomCode, setInitialRoomCode] = useState('');
   const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
-  const [isLobbyOfflineQRModalOpen, setIsLobbyOfflineQRModalOpen] = useState(false);
-  const [showReconnectQRPrompt, setShowReconnectQRPrompt] = useState(false);
 
   const [peers, setPeers] = useState({});
   const [localVolume, setLocalVolume] = useState(0);
@@ -64,7 +63,6 @@ export default function App() {
     }
   }, [view]);
 
-  // URL'den oda kodu
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('room');
@@ -101,13 +99,15 @@ export default function App() {
     return signalingRef.current;
   }, []);
 
-  const startMeshSession = useCallback(async (currentRoomData, existingPeers = []) => {
-    const signaling = getSignalingClient();
+  // =====================================================
+  //  MESH OTURUMU BAŞLAT (her mod için ortak)
+  // =====================================================
+  const startMeshWithSignaling = useCallback(async (currentRoomData, signalingClient, existingPeers = []) => {
     await keepScreenAwake();
 
     const mesh = new MeshManager({
       myPeerId: currentRoomData?.peerId || '',
-      sendSignal: (targetPeerId, data) => signaling.sendSignal(targetPeerId, data),
+      sendSignal: (targetPeerId, data) => signalingClient.sendSignal(targetPeerId, data),
       onPeerStateChange: (peerId, info) => {
         setPeers((prev) => ({ ...prev, [peerId]: { name: info.name, state: info.state, isMuted: info.isMuted, stats: info.stats } }));
       },
@@ -119,13 +119,7 @@ export default function App() {
       onPeerReconnect: (peerId) => { announceReconnect(peerId); showToast('Bağlantı yeniden kuruldu!'); },
       onHornReceived: (_, name) => { playAlertTone('horn'); showToast(`⚠️ ${name || 'Sürücü'} ikaz tonu gönderdi!`); },
       onStatsUpdate: (s) => setStats(s),
-      // ⭐ Otomatik yeniden bağlantı başarısız olduğunda QR eşleşme modalını aç
-      onReconnectionFailed: () => {
-        console.log('[App] Otomatik yeniden bağlantı başarısız, çevrimdışı QR eşleşme öneriliyor.');
-        showToast('Hotspot geçişi başarısız. QR ile yeniden eşleşin.');
-        speakText('Bağlantı koptu. QR kodla yeniden eşleşin.');
-        setShowReconnectQRPrompt(true);
-      },
+      onReconnectionFailed: () => {},
     });
 
     meshRef.current = mesh;
@@ -135,7 +129,7 @@ export default function App() {
       for (const p of existingPeers) await mesh.connectToPeer(p.id, p.name);
     }
 
-    // Ağ değişim izleyicisini kur
+    // Ağ değişim izleyicisi
     if (unwatchNetworkRef.current) unwatchNetworkRef.current();
     unwatchNetworkRef.current = watchNetworkChanges((reason) => {
       if (meshRef.current) {
@@ -143,8 +137,96 @@ export default function App() {
         meshRef.current.restartIceForAllPeers();
       }
     });
-  }, [getSignalingClient, showToast]);
+  }, [showToast]);
 
+  // =====================================================
+  //  ⭐ HOTSPOT İNTERKOM — Tek Tuşla Otomatik Bağlan
+  //  Kod yok, QR yok. Aynı ağdaki herkes otomatik eşleşir.
+  // =====================================================
+  const handleHotspotIntercom = async () => {
+    try {
+      setError(null);
+      setIsConnecting(true);
+      ensureAudioUnlocked();
+
+      const savedName = localStorage.getItem('ridetalk_name') || '';
+      const name = savedName || prompt('Sürücü adınız:', 'Sürücü') || 'Sürücü';
+      localStorage.setItem('ridetalk_name', name);
+
+      // Yerel sinyal sunucusuna bağlan
+      const local = new LocalSignalingClient();
+      await local.connect();
+      signalingRef.current = local;
+
+      // Sinyal olaylarını dinle
+      local.on('joined', async (msg) => {
+        console.log('[App] Hotspot odasına katıldı:', msg);
+        const rd = { roomCode: 'HOTSPOT', peerId: msg.peerId, name: msg.name };
+        setRoomData(rd);
+
+        const existingPeers = msg.existingPeers || [];
+        const ip = {};
+        existingPeers.forEach((p) => {
+          ip[p.id] = { name: p.name, state: 'connecting', isMuted: false, stats: null };
+        });
+        setPeers(ip);
+
+        try {
+          await startMeshWithSignaling(rd, local, existingPeers);
+          setIsConnecting(false);
+          setView('active');
+
+          if (existingPeers.length > 0) {
+            speakText(`Hotspot interkoma bağlandı. ${existingPeers.length} sürücü mevcut.`);
+          } else {
+            speakText('Hotspot interkom aktif. Diğer sürücüler bekleniyor.');
+          }
+        } catch (e) {
+          setError(e.message);
+          setIsConnecting(false);
+        }
+      });
+
+      local.on('peer-joined', (msg) => {
+        announceJoin(msg.peerId, msg.name);
+        showToast(`${msg.name} bağlandı!`);
+        setPeers((prev) => ({
+          ...prev,
+          [msg.peerId]: { name: msg.name, state: 'connecting', isMuted: false, stats: null },
+        }));
+        // Yeni peer ile WebRTC bağlantısı kur
+        if (meshRef.current) {
+          meshRef.current.connectToPeer(msg.peerId, msg.name);
+        }
+      });
+
+      local.on('signal', async (msg) => {
+        if (meshRef.current) {
+          await meshRef.current.handleSignal(msg.fromPeerId, msg.data);
+        }
+      });
+
+      local.on('peer-left', (msg) => {
+        playSomeoneLeftSound();
+        announceDisconnect(msg.peerId);
+        showToast(`${msg.name || 'Sürücü'} ayrıldı`);
+        if (meshRef.current) meshRef.current.removePeer(msg.peerId);
+        setPeers((prev) => { const n = { ...prev }; delete n[msg.peerId]; return n; });
+      });
+
+      // Odaya katıl
+      local.join(name);
+
+    } catch (err) {
+      console.error('[App] Hotspot interkom hatası:', err);
+      setError('Yerel sinyal sunucusuna bağlanılamadı. Vite dev sunucusu çalışıyor mu?');
+      setIsConnecting(false);
+    }
+  };
+
+  // =====================================================
+  //  İNTERNET ÜZERİNDEN ODA (Firebase/WebSocket)
+  // =====================================================
   const bindSignalingEvents = useCallback((signaling) => {
     signaling.on('peer-joined', (msg) => {
       announceJoin(msg.peerId, msg.name);
@@ -160,7 +242,6 @@ export default function App() {
     signaling.on('error', (err) => { setError(err.message || 'Hata'); setIsConnecting(false); });
   }, [showToast]);
 
-  // Oda Oluştur
   const handleStartRoom = async (name) => {
     try {
       setError(null); setIsConnecting(true); ensureAudioUnlocked();
@@ -170,14 +251,13 @@ export default function App() {
       signaling.on('room-created', async (msg) => {
         const rd = { roomCode: msg.roomCode, peerId: msg.peerId, name: msg.name };
         setRoomData(rd); setIsConnecting(false);
-        try { await startMeshSession(rd, []); setView('active'); speakText('İnterkom odası açıldı.'); }
+        try { await startMeshWithSignaling(rd, signaling, []); setView('active'); speakText('İnterkom odası açıldı.'); }
         catch (e) { setError(e.message); }
       });
       signaling.createRoom(name);
     } catch (err) { setError(err.message); setIsConnecting(false); }
   };
 
-  // Odaya Katıl
   const handleJoinRoom = async (code, name) => {
     try {
       setError(null); setIsConnecting(true); ensureAudioUnlocked();
@@ -190,39 +270,16 @@ export default function App() {
         const ip = {};
         (msg.existingPeers || []).forEach((p) => { ip[p.id] = { name: p.name, state: 'connecting', isMuted: false, stats: null }; });
         setPeers(ip);
-        try { await startMeshSession(rd, msg.existingPeers || []); setIsConnecting(false); setView('active'); speakText(`${msg.roomCode} odasına bağlanıldı.`); }
+        try { await startMeshWithSignaling(rd, signaling, msg.existingPeers || []); setIsConnecting(false); setView('active'); speakText(`${msg.roomCode} odasına bağlanıldı.`); }
         catch (e) { setError(e.message); setIsConnecting(false); }
       });
       signaling.joinRoom(code, name);
     } catch (err) { setError(err.message); setIsConnecting(false); }
   };
 
-  // 0 İnternet Doğrudan Başlat
-  const handleStartDirectOffline = async () => {
-    try {
-      ensureAudioUnlocked();
-      const rd = { roomCode: 'OFFLINE', peerId: 'peer_' + Math.random().toString(36).substring(2, 9), name: localStorage.getItem('ridetalk_name') || 'Sürücü' };
-      setRoomData(rd);
-      const mesh = new MeshManager({
-        myPeerId: rd.peerId,
-        onPeerStateChange: (pid, i) => setPeers((p) => ({ ...p, [pid]: { name: i.name, state: i.state, isMuted: i.isMuted, stats: i.stats } })),
-        onPeerVolumeChange: (pid, l, s) => setPeerVolumes((p) => ({ ...p, [pid]: { level: l, isSpeaking: s } })),
-        onLocalVolumeChange: (l, s) => { setLocalVolume(l); setLocalIsSpeaking(s); },
-        onPeerDisconnect: (pid) => { playSomeoneLeftSound(); announceDisconnect(pid); },
-        onPeerReconnect: (pid) => announceReconnect(pid),
-        onHornReceived: (_, n) => { playAlertTone('horn'); showToast(`⚠️ ${n} ikaz tonu gönderdi!`); },
-        onStatsUpdate: (s) => setStats(s),
-        onReconnectionFailed: () => {},
-      });
-      meshRef.current = mesh;
-      await mesh.init();
-      await keepScreenAwake();
-      setView('active');
-      setIsLobbyOfflineQRModalOpen(true);
-      speakText('Çevrimdışı interkom aktif.');
-    } catch (err) { alert(`Mikrofon hatası: ${err.message}`); }
-  };
-
+  // =====================================================
+  //  KONTROLLER
+  // =====================================================
   const handleToggleMute = () => {
     const next = !isMuted; setIsMuted(next);
     if (meshRef.current) meshRef.current.setMute(next);
@@ -236,11 +293,18 @@ export default function App() {
 
   const handleLeaveRoomDirect = () => {
     if (meshRef.current) { meshRef.current.destroy(); meshRef.current = null; }
-    if (signalingRef.current) { signalingRef.current.leaveRoom(); signalingRef.current.disconnect(); signalingRef.current = null; }
+    if (signalingRef.current) {
+      try { signalingRef.current.leaveRoom && signalingRef.current.leaveRoom(); } catch (_) {}
+      signalingRef.current.disconnect();
+      signalingRef.current = null;
+    }
     if (unwatchNetworkRef.current) { unwatchNetworkRef.current(); unwatchNetworkRef.current = null; }
     releaseScreenAwake(); setPeers({}); setRoomData(null); setView('home'); showToast('İnterkomdan ayrıldınız');
   };
 
+  // =====================================================
+  //  RENDER
+  // =====================================================
   return (
     <div className="app-container" onClick={ensureAudioUnlocked}>
       <div className="ambient-glow cyan-glow"></div>
@@ -251,27 +315,57 @@ export default function App() {
           <header className="lobby-brand">
             <div className="brand-logo-wrap"><Radio size={36} className="brand-icon" /><div className="brand-pulse-ring"></div></div>
             <h1 className="brand-title">RideTalk</h1>
-            <p className="brand-tagline">Motosiklet İçin Tam Mesh & 0 İnternet Hotspot İnterkomu</p>
+            <p className="brand-tagline">Motosiklet İçin Tam Mesh & Hotspot İnterkomu</p>
           </header>
+
           <div className="feature-pill-row">
             <div className="feat-pill"><Shield size={14} className="text-emerald" /><span>PWA Çevrimdışı</span></div>
-            <div className="feat-pill"><WifiOff size={14} className="text-orange" /><span>0 İnternet QR Mesh</span></div>
+            <div className="feat-pill"><Wifi size={14} className="text-orange" /><span>Hotspot Otomatik</span></div>
             <div className="feat-pill"><Volume2 size={14} className="text-cyan" /><span>DSP Gürültü Filtresi</span></div>
           </div>
+
+          {/* ⭐ ANA BUTON: Hotspot İnterkom */}
           <div className="lobby-cards-grid">
+            <button
+              type="button"
+              className="lobby-action-card card-hotspot-main"
+              onClick={handleHotspotIntercom}
+              disabled={isConnecting}
+              style={{
+                gridColumn: '1 / -1',
+                background: 'linear-gradient(135deg, rgba(255,107,0,0.2) 0%, rgba(0,229,255,0.15) 100%)',
+                border: '2px solid rgba(255,107,0,0.6)',
+                minHeight: '100px',
+              }}
+            >
+              <div className="card-action-icon" style={{ color: '#ff6b00' }}>
+                {isConnecting ? <Zap size={36} className="animate-pulse" /> : <Wifi size={36} />}
+              </div>
+              <div className="card-action-text">
+                <h3 style={{ color: '#ff6b00', fontSize: '1.15rem' }}>
+                  {isConnecting ? 'Bağlanılıyor...' : '🔥 Hotspot İnterkom — Tek Tuş'}
+                </h3>
+                <p>Hotspot aç, herkes bağlansın, otomatik interkom başlasın. Kod yok, QR yok!</p>
+              </div>
+            </button>
+
+            {/* İnternet Üzerinden Oda (Opsiyonel) */}
             <button type="button" className="lobby-action-card card-create" onClick={() => { setError(null); setRoomData(null); setView('create'); }}>
-              <div className="card-action-icon"><PlusCircle size={32} /></div>
-              <div className="card-action-text"><h3>Oda Oluştur</h3><p>İnternet üzerinden yeni telsiz odası başlatın</p></div>
+              <div className="card-action-icon"><PlusCircle size={28} /></div>
+              <div className="card-action-text"><h3>İnternet Odası</h3><p>İnternet üzerinden kodlu oda</p></div>
             </button>
             <button type="button" className="lobby-action-card card-join" onClick={() => { setError(null); setView('join'); }}>
-              <div className="card-action-icon"><LogIn size={32} /></div>
-              <div className="card-action-text"><h3>Odaya Katıl</h3><p>6 haneli kod girerek veya kamerayla katılın</p></div>
-            </button>
-            <button type="button" className="lobby-action-card card-offline-direct" style={{ gridColumn: '1 / -1', background: 'linear-gradient(135deg, rgba(255,107,0,0.15) 0%, rgba(255,23,68,0.1) 100%)', border: '1px solid rgba(255,107,0,0.4)' }} onClick={handleStartDirectOffline}>
-              <div className="card-action-icon" style={{ color: '#ff6b00' }}><QrCode size={32} /></div>
-              <div className="card-action-text"><h3 style={{ color: '#ff6b00' }}>0 İnternet — Doğrudan Hotspot Eşleşmesi</h3><p>İnternet hiç çekmiyorsa Hotspot açıp doğrudan QR ile bağlanın</p></div>
+              <div className="card-action-icon"><LogIn size={28} /></div>
+              <div className="card-action-text"><h3>Odaya Katıl</h3><p>6 haneli kod ile katıl</p></div>
             </button>
           </div>
+
+          {error && (
+            <div className="error-banner" style={{ margin: '12px 0', padding: '12px', borderRadius: '12px', background: 'rgba(255,23,68,0.15)', border: '1px solid rgba(255,23,68,0.4)', color: '#ff8a80', fontSize: '0.85rem', textAlign: 'center' }}>
+              {error}
+            </div>
+          )}
+
           <footer className="lobby-footer" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span>Sürüş sırasında telefonunuzu gidon tutucusunda açık tutun.</span>
             <button type="button" className="btn-text-settings" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#64748b', background: 'rgba(255,255,255,0.04)', padding: '6px 12px', borderRadius: '9999px', border: '1px solid rgba(255,255,255,0.06)' }} onClick={() => setIsServerSettingsOpen(true)}>
@@ -293,20 +387,12 @@ export default function App() {
           isMuted={isMuted} onToggleMute={handleToggleMute} onSendHorn={handleSendHorn}
           onLeaveRoom={handleLeaveRoomDirect} stats={stats} isWakeLockActive={isWakeLockActive}
           isOnline={isOnline} toastMessage={toastMessage} meshManager={meshRef.current}
-          showReconnectQRPrompt={showReconnectQRPrompt}
+          showReconnectQRPrompt={false}
           onOfflineHandshakeSuccess={(partnerName) => {
-            setShowReconnectQRPrompt(false);
             showToast(`${partnerName} ile ses bağlantısı kuruldu!`);
             setPeers((prev) => ({ ...prev, offline_peer: { name: partnerName || 'Sürücü', state: 'connected', isMuted: false, stats: { isLocal: true, rtt: 10 } } }));
           }}
         />
-      )}
-
-      {isLobbyOfflineQRModalOpen && (
-        <OfflineQRHandshakeModal isOpen={isLobbyOfflineQRModalOpen} onClose={() => setIsLobbyOfflineQRModalOpen(false)} meshManager={meshRef.current} selfName={roomData?.name || 'Sürücü'} onHandshakeSuccess={(pn) => {
-          setIsLobbyOfflineQRModalOpen(false); showToast(`${pn} ile ses bağlandı!`);
-          setPeers((p) => ({ ...p, offline_peer: { name: pn || 'Sürücü', state: 'connected', isMuted: false, stats: { isLocal: true, rtt: 10 } } }));
-        }} />
       )}
     </div>
   );
