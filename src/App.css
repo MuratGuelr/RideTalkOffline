@@ -1,37 +1,30 @@
 /* =========================================================================
-   RideTalk — Motorcycle Cyber Cockpit & Dark HUD Design System
-   Gidon tutucuya ve eldivenle kullanıma özel yüksek kontrastlı tasarım
+   RIDETALK — POSTE-MODERN MOTOSİKLET İNTERKOM TASARIM SİSTEMİ (POPPINS)
    ========================================================================= */
 
 :root {
-  --bg-app: #060913;
-  --bg-cockpit: #090e1c;
-  --bg-card: rgba(14, 22, 42, 0.75);
-  --bg-card-hover: rgba(22, 34, 64, 0.85);
+  --bg-0: #060a12;
+  --bg-1: #0b1322;
+  --bg-2: #101c30;
+  --card-bg: rgba(14, 24, 42, 0.85);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(0, 229, 255, 0.25);
 
   --neon-cyan: #00e5ff;
-  --neon-cyan-glow: rgba(0, 229, 255, 0.4);
-  --electric-orange: #ff6b00;
-  --electric-orange-glow: rgba(255, 107, 0, 0.4);
+  --neon-cyan-glow: rgba(0, 229, 255, 0.35);
   --emerald-green: #00e676;
-  --emerald-glow: rgba(0, 230, 118, 0.4);
-  --crimson-red: #ff1744;
-  --crimson-glow: rgba(255, 23, 68, 0.4);
-  --amber-yellow: #ffd600;
+  --emerald-green-glow: rgba(0, 230, 118, 0.35);
+  --electric-orange: #ff7d00;
+  --electric-orange-glow: rgba(255, 125, 0, 0.35);
+  --crimson-red: #ff2a55;
+  --crimson-red-glow: rgba(255, 42, 85, 0.35);
 
-  --text-primary: #ffffff;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --text-0: #ffffff;
+  --text-1: #94a3b8;
+  --text-2: #64748b;
 
-  --border-subtle: rgba(255, 255, 255, 0.1);
-  --border-active: rgba(0, 229, 255, 0.4);
-
-  --radius-sm: 8px;
-  --radius-md: 16px;
-  --radius-lg: 24px;
-  --radius-full: 9999px;
-
-  --shadow-hud: 0 10px 30px rgba(0, 0, 0, 0.6);
+  --font-main: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 }
 
 * {
@@ -39,416 +32,563 @@
   margin: 0;
   padding: 0;
   -webkit-tap-highlight-color: transparent;
+  font-family: var(--font-main);
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-0);
+  color: var(--text-0);
+  overflow-x: hidden;
   user-select: none;
+  font-family: var(--font-main);
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  background-color: var(--bg-app);
-  color: var(--text-primary);
+  background:
+    radial-gradient(circle at 15% 0%, rgba(0, 229, 255, 0.08), transparent 40%),
+    radial-gradient(circle at 85% 100%, rgba(0, 230, 118, 0.06), transparent 40%),
+    var(--bg-0);
   min-height: 100vh;
-  overflow-x: hidden;
-  touch-action: manipulation;
+  min-height: 100dvh;
+  display: flex;
+  justify-content: center;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
 }
 
 /* =========================================================================
-   APP CONTAINER & AMBIENT
+   TAM EKRAN DOĞAL KOKPİT ÇERÇEVESİ (SAHTE TELEFON ÇERÇEVESİ YOK!)
    ========================================================================= */
 .app-container {
-  position: relative;
+  width: 100%;
+  max-width: 520px;
   min-height: 100vh;
+  min-height: 100dvh;
+  position: relative;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(circle at 50% -10%, #101c38 0%, #060913 80%);
-  padding: 12px;
-  overflow-x: hidden;
+  background: transparent;
 }
 
-.ambient-glow {
-  position: fixed;
-  border-radius: 50%;
-  pointer-events: none;
-  filter: blur(140px);
-  z-index: 0;
-  opacity: 0.22;
+.screen {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 18px 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  position: relative;
+  overflow-y: auto;
 }
-.cyan-glow {
-  top: -120px;
-  left: 10%;
-  width: 350px;
-  height: 350px;
-  background: var(--neon-cyan);
+
+.screen::-webkit-scrollbar {
+  display: none;
 }
-.orange-glow {
-  bottom: -100px;
-  right: 10%;
-  width: 320px;
-  height: 320px;
-  background: var(--electric-orange);
+
+.spacer {
+  flex: 1;
 }
 
 /* =========================================================================
-   LOBBY / HOME VIEW
+   1. KATILIM EKRANI (JOIN SCREEN)
    ========================================================================= */
-.lobby-wrapper {
-  position: relative;
-  z-index: 1;
-  max-width: 500px;
-  width: 100%;
-  margin: auto;
+.join-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.join-top {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
-  padding: 16px 0;
-}
-
-.lobby-brand {
+  margin-top: 10px;
   text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
 }
 
-.brand-logo-wrap {
-  position: relative;
-  width: 80px;
-  height: 80px;
-  background: linear-gradient(135deg, rgba(0, 229, 255, 0.25) 0%, rgba(255, 107, 0, 0.2) 100%);
-  border: 2px solid var(--neon-cyan);
-  border-radius: 24px;
+.logo-mark {
+  width: 60px;
+  height: 60px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #00e5ff 0%, #0091ea 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 12px;
-  box-shadow: 0 0 35px var(--neon-cyan-glow);
+  box-shadow: 0 10px 30px var(--neon-cyan-glow);
+  color: #060913;
 }
 
-.brand-icon {
-  color: var(--neon-cyan);
-  filter: drop-shadow(0 0 10px var(--neon-cyan));
-}
-
-.brand-pulse-ring {
-  position: absolute;
-  inset: -6px;
-  border: 1.5px dashed rgba(0, 229, 255, 0.5);
-  border-radius: 30px;
-  animation: rotate-slow 20s linear infinite;
-}
-
-@keyframes rotate-slow {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.brand-title {
-  font-size: 2.5rem;
-  font-weight: 900;
-  letter-spacing: -0.5px;
-  background: linear-gradient(180deg, #ffffff 40%, #94a3b8 100%);
+.wordmark {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  margin-top: 14px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #ffffff 60%, var(--neon-cyan) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
-.brand-tagline {
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-  margin-top: 4px;
+.tagline {
+  font-size: 14px;
+  color: var(--text-1);
+  margin-top: 2px;
   font-weight: 500;
 }
 
-.feature-pill-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-}
-
-.feat-pill {
+.feature-pill {
+  margin-top: 12px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-subtle);
-  padding: 6px 12px;
-  border-radius: var(--radius-full);
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--text-secondary);
+  padding: 6px 16px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(0, 229, 255, 0.35);
+  background: rgba(0, 229, 255, 0.08);
+  color: var(--neon-cyan);
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.lobby-cards-grid {
-  width: 100%;
+.join-form {
+  margin-top: 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 18px;
+  background: var(--card-bg);
+  border: 1px solid var(--line);
+  padding: 20px 18px;
+  border-radius: 24px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
 }
 
-.lobby-action-card {
-  width: 100%;
+.field {
+  display: flex;
+  flex-direction: column;
+}
+
+.field-label {
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.field-row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 18px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  text-align: left;
-  box-shadow: var(--shadow-hud);
-  transition: all 0.2s ease;
-  cursor: pointer;
-  backdrop-filter: blur(12px);
+  justify-content: space-between;
+  border-bottom: 1.5px solid var(--line-strong);
+  padding-bottom: 8px;
+  margin-top: 6px;
 }
 
-.lobby-action-card:active {
+.field-row input {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 600;
+  outline: none;
+  width: 68%;
+}
+
+.field-row input::placeholder {
+  color: var(--text-2);
+}
+
+.ghost-btn {
+  background: rgba(0, 229, 255, 0.1);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  color: var(--neon-cyan);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 10px;
+  transition: all 0.15s;
+}
+
+.ghost-btn:active {
+  transform: scale(0.95);
+  background: rgba(0, 229, 255, 0.2);
+}
+
+/* Otomatik Bağlan Switch */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 2px;
+}
+
+.toggle-text .t-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.toggle-text .t-desc {
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
+.switch {
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  position: relative;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  flex: 0 0 auto;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text-1);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.switch.on {
+  background: rgba(0, 229, 255, 0.25);
+  border-color: var(--neon-cyan);
+}
+
+.switch.on::after {
+  transform: translateX(20px);
+  background: var(--neon-cyan);
+  box-shadow: 0 0 10px var(--neon-cyan);
+}
+
+/* CTA Buton */
+.cta-btn {
+  width: 100%;
+  padding: 16px;
+  border-radius: 18px;
+  border: none;
+  background: linear-gradient(135deg, var(--neon-cyan) 0%, #0091ea 100%);
+  color: #060913;
+  font-size: 16px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 10px 30px var(--neon-cyan-glow);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.cta-btn:active {
   transform: scale(0.98);
 }
 
-.card-action-icon {
-  flex-shrink: 0;
-  width: 54px;
-  height: 54px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.06);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.cta-btn.loading {
+  opacity: 0.8;
+  cursor: wait;
 }
 
-.card-action-text h3 {
-  font-size: 1.05rem;
-  font-weight: 800;
-  color: var(--text-primary);
-  margin-bottom: 2px;
+.cta-sub {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin-top: -6px;
 }
 
-.card-action-text p {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  line-height: 1.3;
-}
-
-/* =========================================================================
-   ACTIVE COCKPIT / HUD VIEW (MOTORCYCLE COCKPIT)
-   ========================================================================= */
-.active-cockpit {
-  position: relative;
-  z-index: 1;
-  max-width: 580px;
-  width: 100%;
-  margin: 0 auto;
-  min-height: calc(100vh - 24px);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-/* Üst HUD Çubuğu */
-.cockpit-hud-bar {
+/* Geri Sayım Şeridi */
+.biker-countdown-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(10, 16, 32, 0.85);
-  border: 1.5px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 8px 14px;
-  backdrop-filter: blur(16px);
-  box-shadow: var(--shadow-hud);
+  background: rgba(0, 229, 255, 0.12);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 13px;
+  color: #ffffff;
 }
 
-.hud-left, .hud-right {
+.countdown-info {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.hud-room-code {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(0, 229, 255, 0.1);
-  border: 1px solid rgba(0, 229, 255, 0.3);
-  padding: 6px 12px;
-  border-radius: 10px;
-}
-
-.hud-code-value {
-  font-size: 0.95rem;
-  font-weight: 900;
-  letter-spacing: 1px;
+.countdown-number {
   color: var(--neon-cyan);
-  font-family: monospace, sans-serif;
-}
-
-.hud-btn-action {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-  padding: 6px 12px;
-  border-radius: 10px;
-  font-size: 0.8rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.hud-btn-action.active-fullscreen {
-  background: rgba(0, 229, 255, 0.15);
-  border-color: var(--neon-cyan);
-  color: var(--neon-cyan);
-}
-
-.hud-wakelock-tag {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.75rem;
+  font-size: 15px;
   font-weight: 800;
-  padding: 6px 10px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-muted);
-  border: 1px solid var(--border-subtle);
 }
 
-.hud-wakelock-tag.active {
-  background: rgba(0, 230, 118, 0.12);
-  color: var(--emerald-green);
-  border-color: rgba(0, 230, 118, 0.3);
+.btn-countdown-cancel {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  color: var(--text-1);
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.cockpit-toast {
+/* İnternetsiz Nasıl Çalışır? Accordion */
+.disclosure {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.disclosure-head {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  background: rgba(8, 14, 28, 0.95);
-  border: 1.5px solid var(--neon-cyan);
-  box-shadow: 0 0 20px var(--neon-cyan-glow);
-  padding: 10px 16px;
-  border-radius: 12px;
-  font-size: 0.88rem;
-  font-weight: 800;
+  gap: 6px;
+  color: var(--text-1);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.disclosure-arrow {
+  transition: transform 0.25s ease;
+}
+
+.disclosure-head.open .disclosure-arrow {
+  transform: rotate(180deg);
+}
+
+.disclosure-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+  opacity: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.disclosure-body.open {
+  max-height: 260px;
+  opacity: 1;
+  margin-top: 12px;
+}
+
+.step {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-1);
+  line-height: 1.45;
+}
+
+.step b {
   color: #ffffff;
+}
+
+.step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  color: var(--neon-cyan);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  border: 1px solid var(--line-strong);
+}
+
+.join-footer {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin-top: auto;
+  padding: 12px 0 6px;
+}
+
+.biker-error-banner {
+  background: rgba(255, 42, 85, 0.15);
+  border: 1px solid rgba(255, 42, 85, 0.4);
+  color: var(--crimson-red);
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 12px;
   text-align: center;
 }
 
-/* Hotspot Şeridi */
-.hotspot-banner-strip {
+/* =========================================================================
+   2. AKTİF KOKPİT EKRANI (ACTIVE ROOM)
+   ========================================================================= */
+.main-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(90deg, rgba(0, 229, 255, 0.12) 0%, rgba(0, 230, 118, 0.08) 100%);
-  border: 1px solid rgba(0, 229, 255, 0.3);
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  font-size: 0.8rem;
+  width: 100%;
+  padding-bottom: 12px;
 }
 
-.hotspot-banner-content {
+.group-id {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text-primary);
+  gap: 10px;
 }
 
-/* Sürücüler Tablosu */
-.cockpit-main-area {
-  flex: 1;
+.group-id .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--emerald-green);
+  box-shadow: 0 0 12px var(--emerald-green);
+  flex: 0 0 auto;
+}
+
+.group-id .dot.searching {
+  background: var(--electric-orange);
+  box-shadow: 0 0 12px var(--electric-orange);
+}
+
+.group-id .name {
+  font-size: 17px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+}
+
+.group-id .status {
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.top-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: var(--card-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  color: var(--text-1);
+  transition: all 0.15s;
+}
+
+.icon-btn:active {
+  transform: scale(0.94);
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+}
+
+/* =========================================================================
+   3. SÜRÜCÜ KARTLARI (SOLDAN SAĞA GENİŞ KARTLAR)
+   ========================================================================= */
+.riders-section-wrap {
   display: flex;
   flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
 }
 
-.riders-grid-container {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.riders-header {
+.riders-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 4px;
 }
 
-.riders-count {
+.riders-count-badge {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.85rem;
-  font-weight: 800;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-1);
 }
 
 .riders-mesh-tag {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 0.72rem;
-  font-weight: 800;
+  background: rgba(0, 230, 118, 0.12);
+  border: 1px solid rgba(0, 230, 118, 0.3);
   color: var(--emerald-green);
-  background: rgba(0, 230, 118, 0.1);
-  padding: 3px 8px;
-  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
 }
 
-.riders-grid {
-  display: grid;
-  grid-template-columns: 1fr;
+.riders-list-container {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  width: 100%;
+  max-height: 420px;
+  overflow-y: auto;
 }
 
-/* =========================================================================
-   RIDER PARTICIPANT CARD (KASK / SÜRÜCÜ KARTI)
-   ========================================================================= */
+.riders-list-container::-webkit-scrollbar {
+  display: none;
+}
+
 .rider-card {
   position: relative;
-  background: var(--bg-card);
-  border: 1.5px solid var(--border-subtle);
+  background: var(--card-bg);
+  border: 1.5px solid var(--line);
   border-radius: 18px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   transition: all 0.2s ease;
-  overflow: hidden;
   backdrop-filter: blur(12px);
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
-.rider-self {
+.rider-card.rider-self {
   border-color: rgba(0, 229, 255, 0.35);
-  background: linear-gradient(135deg, rgba(0, 229, 255, 0.08) 0%, rgba(14, 22, 42, 0.8) 100%);
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.08) 0%, var(--card-bg) 100%);
 }
 
-.rider-speaking {
-  border-color: var(--emerald-green);
-  box-shadow: 0 0 25px var(--emerald-glow);
-  transform: translateY(-1px);
+.rider-card.rider-speaking {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 25px var(--neon-cyan-glow);
 }
 
 .speaking-glow-ring {
   position: absolute;
-  inset: 0;
-  border: 2px solid var(--emerald-green);
-  border-radius: inherit;
-  animation: pulse-speaking 1.2s infinite ease-in-out;
+  inset: -2px;
+  border-radius: 20px;
+  border: 1.5px solid var(--neon-cyan);
+  box-shadow: 0 0 16px var(--neon-cyan-glow);
   pointer-events: none;
-}
-
-@keyframes pulse-speaking {
-  0% { opacity: 0.9; box-shadow: 0 0 10px var(--emerald-green); }
-  50% { opacity: 0.3; box-shadow: 0 0 25px var(--emerald-green); }
-  100% { opacity: 0.9; box-shadow: 0 0 10px var(--emerald-green); }
-}
-
-.rider-disconnected {
-  opacity: 0.6;
-  border-color: var(--crimson-red);
 }
 
 .rider-card-inner {
@@ -459,37 +599,29 @@ body {
 
 .rider-avatar-wrapper {
   position: relative;
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .rider-avatar {
-  width: 54px;
-  height: 54px;
+  width: 48px;
+  height: 48px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1.5px solid var(--border-subtle);
+  background: var(--bg-2);
+  border: 1.5px solid var(--line-strong);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary);
-  transition: all 0.2s;
-}
-
-.avatar-speaking {
-  background: rgba(0, 230, 118, 0.15);
-  border-color: var(--emerald-green);
-  color: var(--emerald-green);
-  filter: drop-shadow(0 0 8px var(--emerald-green));
+  color: var(--neon-cyan);
 }
 
 .rider-status-dot {
   position: absolute;
   bottom: -2px;
   right: -2px;
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
-  border: 2.5px solid #060913;
+  border: 2px solid var(--bg-1);
 }
 
 .dot-connected {
@@ -498,17 +630,12 @@ body {
 }
 
 .dot-reconnecting {
-  background-color: var(--amber-yellow);
-  animation: blink 1s infinite;
+  background-color: var(--electric-orange);
+  box-shadow: 0 0 8px var(--electric-orange);
 }
 
 .dot-failed {
   background-color: var(--crimson-red);
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
 }
 
 .rider-info-col {
@@ -523,19 +650,18 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
 }
 
 .rider-name-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
 .rider-name {
-  font-size: 1.05rem;
-  font-weight: 800;
+  font-size: 14.5px;
+  font-weight: 700;
   color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
@@ -543,70 +669,101 @@ body {
 }
 
 .self-badge {
-  font-size: 0.65rem;
-  font-weight: 900;
-  background: var(--neon-cyan);
+  background: linear-gradient(135deg, var(--neon-cyan) 0%, #0091ea 100%);
   color: #060913;
-  padding: 2px 6px;
-  border-radius: 6px;
-  letter-spacing: 0.5px;
-}
-
-.rider-state-badge {
-  flex-shrink: 0;
-}
-
-.badge-mute {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(255, 23, 68, 0.15);
-  border: 1px solid rgba(255, 23, 68, 0.35);
-  color: #ff5252;
-  font-size: 0.72rem;
+  font-size: 10px;
   font-weight: 800;
-  padding: 3px 8px;
-  border-radius: 8px;
+  padding: 1px 6px;
+  border-radius: 6px;
 }
 
-.badge-speaking {
+/* Canlı GPS Mesafe Hapı (Çok Net Görünür) */
+.rider-distance-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  background: rgba(0, 230, 118, 0.2);
-  border: 1px solid var(--emerald-green);
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 7px;
+  letter-spacing: 0.3px;
+}
+
+.dist-pill-normal {
+  background: rgba(0, 230, 118, 0.16);
   color: var(--emerald-green);
-  font-size: 0.72rem;
-  font-weight: 900;
-  padding: 3px 8px;
-  border-radius: 8px;
-  box-shadow: 0 0 10px var(--emerald-glow);
+  border: 1px solid rgba(0, 230, 118, 0.4);
+}
+
+.dist-pill-warning {
+  background: rgba(255, 125, 0, 0.22);
+  color: var(--electric-orange);
+  border: 1.5px solid var(--electric-orange);
+  box-shadow: 0 0 10px var(--electric-orange-glow);
+}
+
+.dist-pill-danger {
+  background: rgba(255, 42, 85, 0.25);
+  color: var(--crimson-red);
+  border: 1.5px solid var(--crimson-red);
+  box-shadow: 0 0 14px var(--crimson-red-glow);
+}
+
+.dist-pill-self {
+  background: rgba(0, 229, 255, 0.12);
+  color: var(--neon-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.3);
 }
 
 .badge-live {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: rgba(0, 229, 255, 0.1);
-  border: 1px solid rgba(0, 229, 255, 0.25);
+  background: rgba(0, 230, 118, 0.15);
+  color: var(--emerald-green);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.badge-mute {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 42, 85, 0.15);
+  color: var(--crimson-red);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.badge-speaking {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 229, 255, 0.2);
   color: var(--neon-cyan);
-  font-size: 0.72rem;
+  font-size: 10.5px;
   font-weight: 800;
-  padding: 3px 8px;
-  border-radius: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  box-shadow: 0 0 10px var(--neon-cyan-glow);
 }
 
 .rider-volume-container {
   width: 100%;
-  height: 6px;
+  height: 4px;
   background: rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-full);
+  border-radius: 999px;
   overflow: hidden;
 }
 
 .rider-volume-bar {
   height: 100%;
-  border-radius: var(--radius-full);
+  border-radius: 999px;
   transition: width 0.08s ease-out;
 }
 
@@ -614,24 +771,24 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 0.72rem;
-  color: var(--text-muted);
+  font-size: 11px;
+  color: var(--text-2);
+  font-weight: 500;
 }
 
 .telemetry-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-weight: 600;
+  gap: 5px;
 }
 
 .telemetry-ping {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  font-family: var(--font-mono);
   font-weight: 700;
-  color: var(--text-secondary);
-  font-family: monospace;
+  color: var(--emerald-green);
 }
 
 .ping-dot {
@@ -641,422 +798,565 @@ body {
   background-color: var(--emerald-green);
 }
 
-/* =========================================================================
-   GLOVE-FRIENDLY CONTROLS DOCK (ELDİVENLE KULLANILAN DEV BUTONLAR)
-   ========================================================================= */
-.cockpit-controls-dock {
-  margin-top: auto;
-  padding-top: 10px;
-}
-
-.controls-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.btn-glove-huge {
-  min-height: 80px;
-  border-radius: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 12px 18px;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: all 0.15s ease-out;
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5);
-}
-
-.btn-mic-active {
-  background: linear-gradient(135deg, rgba(0, 230, 118, 0.25) 0%, rgba(0, 229, 255, 0.15) 100%);
-  border-color: var(--emerald-green);
-  color: #ffffff;
-  box-shadow: 0 0 30px var(--emerald-glow);
-}
-
-.btn-mic-active svg {
-  color: var(--emerald-green);
-  filter: drop-shadow(0 0 10px var(--emerald-green));
-}
-
-.btn-mic-muted {
-  background: linear-gradient(135deg, rgba(255, 23, 68, 0.25) 0%, rgba(20, 10, 15, 0.9) 100%);
-  border-color: var(--crimson-red);
-  color: #ffffff;
-  box-shadow: 0 0 25px var(--crimson-glow);
-}
-
-.btn-mic-muted svg {
-  color: var(--crimson-red);
-  filter: drop-shadow(0 0 10px var(--crimson-red));
-}
-
-.btn-glove-huge:active {
-  transform: scale(0.96);
-}
-
-.glove-btn-text {
-  display: flex;
-  flex-direction: column;
-  text-align: left;
-}
-
-.control-label-title {
-  font-size: 0.92rem;
-  font-weight: 900;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
-.control-label-sub {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-.btn-glove-action {
-  min-height: 80px;
-  border-radius: 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 10px;
-  border: 1.5px solid var(--border-subtle);
-  background: var(--bg-card);
-  color: #ffffff;
-  cursor: pointer;
-  transition: all 0.15s ease-out;
-  box-shadow: var(--shadow-hud);
-}
-
-.btn-glove-action:active {
-  transform: scale(0.95);
-}
-
-.btn-horn {
-  border-color: rgba(255, 107, 0, 0.4);
-  background: linear-gradient(135deg, rgba(255, 107, 0, 0.15) 0%, rgba(14, 22, 42, 0.9) 100%);
-}
-
-.btn-horn svg {
-  color: var(--electric-orange);
-  filter: drop-shadow(0 0 8px var(--electric-orange));
-}
-
-.btn-horn.cooldown {
-  opacity: 0.5;
-  filter: grayscale(0.8);
-}
-
-.btn-leave {
-  border-color: rgba(255, 23, 68, 0.3);
-  background: linear-gradient(135deg, rgba(255, 23, 68, 0.12) 0%, rgba(14, 22, 42, 0.9) 100%);
-}
-
-.btn-leave svg {
-  color: var(--crimson-red);
-}
-
-.btn-glove-action .glove-btn-text {
-  text-align: center;
-}
-
-/* =========================================================================
-   GENEL BUTONLAR & FORMLAR
-   ========================================================================= */
-.btn-primary {
-  background: linear-gradient(135deg, var(--neon-cyan) 0%, #0091ea 100%);
-  color: #060913;
-  font-weight: 900;
-  border: none;
-  border-radius: var(--radius-md);
-  padding: 14px 20px;
-  cursor: pointer;
-  box-shadow: 0 0 25px var(--neon-cyan-glow);
-  transition: all 0.2s;
+/* GPS Mesafe Göstergesi Rozetleri */
+.telemetry-distance {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-}
-
-.btn-primary:active {
-  transform: scale(0.97);
-}
-
-.btn-secondary {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--border-subtle);
-  color: #ffffff;
-  font-weight: 700;
-  border-radius: var(--radius-md);
-  padding: 14px 20px;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.btn-secondary:active {
-  transform: scale(0.97);
-}
-
-.btn-full {
-  width: 100%;
-}
-
-.input-text {
-  width: 100%;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1.5px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 12px 16px;
-  color: #ffffff;
-  font-size: 1rem;
-  font-weight: 600;
-  outline: none;
-  transition: border-color 0.2s;
-}
-
-.input-text:focus {
-  border-color: var(--neon-cyan);
-  box-shadow: 0 0 15px var(--neon-cyan-glow);
-}
-
-/* Modallar */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(12px);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-}
-
-.modal-content {
-  background: #0d1424;
-  border: 1.5px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  max-width: 480px;
-  width: 100%;
-  overflow: hidden;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.modal-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  font-family: var(--font-mono);
   font-weight: 800;
-  font-size: 1.1rem;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  letter-spacing: 0.2px;
 }
 
-.btn-close {
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
+.telemetry-distance.dist-normal {
+  background: rgba(0, 230, 118, 0.12);
+  color: var(--emerald-green);
+  border: 1px solid rgba(0, 230, 118, 0.3);
 }
 
-/* =========================================================================
-   LEAVE CONFIRMATION CYBER MODAL (ÖZEL MOTORCU ÇIKIŞ MODALI)
-   ========================================================================= */
-.modal-leave-backdrop {
-  background: rgba(3, 5, 12, 0.88) !important;
-  backdrop-filter: blur(16px) !important;
+.telemetry-distance.dist-warning {
+  background: rgba(255, 125, 0, 0.18);
+  color: var(--electric-orange);
+  border: 1.5px solid var(--electric-orange);
+  box-shadow: 0 0 12px var(--electric-orange-glow);
 }
 
-.modal-leave-cyber-card {
-  position: relative;
-  max-width: 420px;
-  width: 92%;
-  background: linear-gradient(180deg, #10172c 0%, #080c18 100%);
-  border: 1.5px solid rgba(255, 23, 68, 0.45);
-  border-radius: 28px;
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.9), 0 0 40px rgba(255, 23, 68, 0.25);
-  padding: 32px 22px 24px;
+.telemetry-distance.dist-danger {
+  background: rgba(255, 42, 85, 0.25);
+  color: var(--crimson-red);
+  border: 1.5px solid var(--crimson-red);
+  box-shadow: 0 0 16px var(--crimson-red-glow);
+}
+
+/* Radar Bekleme Kartı */
+.radar-waiting-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
   text-align: center;
-  overflow: hidden;
+  padding: 28px 16px;
+  background: var(--card-bg);
+  border: 1.5px dashed rgba(0, 229, 255, 0.3);
+  border-radius: 22px;
+  gap: 14px;
 }
 
-.leave-modal-close-btn {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  width: 32px;
-  height: 32px;
+.radar-scanner-circle {
+  width: 68px;
+  height: 68px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--text-muted);
+  border: 2px solid rgba(0, 229, 255, 0.35);
+  background: radial-gradient(circle, rgba(0, 229, 255, 0.15) 0%, transparent 70%);
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.leave-modal-close-btn:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.leave-icon-hero-wrap {
   position: relative;
-  width: 74px;
-  height: 74px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 4px;
+  box-shadow: 0 0 25px var(--neon-cyan-glow);
 }
 
-.leave-icon-outer-ring {
+.radar-sweep {
   position: absolute;
   inset: -4px;
   border-radius: 50%;
-  border: 2px dashed rgba(255, 23, 68, 0.5);
-  animation: rotate-slow 15s linear infinite;
+  border: 1.5px solid var(--neon-cyan);
+  box-shadow: 0 0 14px var(--neon-cyan-glow);
 }
 
-.leave-icon-inner {
-  width: 64px;
-  height: 64px;
-  border-radius: 22px;
-  background: linear-gradient(135deg, rgba(255, 23, 68, 0.25) 0%, rgba(20, 10, 16, 0.95) 100%);
-  border: 2px solid var(--crimson-red);
+.radar-text-group h4 {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+}
+
+.radar-text-group p {
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin-top: 4px;
+  max-width: 280px;
+}
+
+/* =========================================================================
+   4. ALT DOCK (5 BUTONLU DÜZEN):
+   [GİDON KİLİDİ] [İKAZ BİP] [DEV MİKROFON] [AYRIL] [UYANIK TUT]
+   ========================================================================= */
+.control-row-biker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding-top: 10px;
+  padding-bottom: 6px;
+  gap: 8px;
+}
+
+.side-dock-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+/* Küçük Yuvarlak Butonlar (Kilit ve Uyanık) */
+.side-btn-mini {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--card-bg);
+  border: 1.5px solid var(--line);
+  color: var(--text-1);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 25px var(--crimson-glow);
+  cursor: pointer;
+  transition: all 0.15s;
 }
 
-.leave-modal-text-group {
+.side-btn-mini:active {
+  transform: scale(0.92);
+}
+
+.side-btn-mini.active-locked {
+  background: rgba(255, 42, 85, 0.18);
+  border-color: var(--crimson-red);
+  color: var(--crimson-red);
+  box-shadow: 0 0 15px var(--crimson-red-glow);
+}
+
+.side-btn-mini.active-wakelock {
+  background: rgba(0, 229, 255, 0.18);
+  border-color: var(--neon-cyan);
+  color: var(--neon-cyan);
+  box-shadow: 0 0 15px var(--neon-cyan-glow);
+}
+
+.side-label-mini {
+  font-size: 10px;
+  color: var(--text-2);
+  font-weight: 700;
+}
+
+/* Orta Boy Butonlar (İkaz Bip ve Ayrıl) */
+.side-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card-bg);
+  border: 1.5px solid var(--line);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.side-btn:active {
+  transform: scale(0.92);
+}
+
+.side-btn.warn {
+  color: var(--electric-orange);
+  border-color: rgba(255, 125, 0, 0.4);
+  background: radial-gradient(circle at 50% 50%, rgba(255, 125, 0, 0.15), var(--bg-2));
+  box-shadow: 0 4px 15px rgba(255, 125, 0, 0.2);
+}
+
+.side-btn.danger {
+  color: var(--crimson-red);
+  border-color: rgba(255, 42, 85, 0.4);
+  background: radial-gradient(circle at 50% 50%, rgba(255, 42, 85, 0.15), var(--bg-2));
+  box-shadow: 0 4px 15px rgba(255, 42, 85, 0.2);
+}
+
+.side-btn.cooldown {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.side-btn.locked {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.side-label {
+  font-size: 10.5px;
+  color: var(--text-2);
+  font-weight: 700;
+}
+
+/* Dev Glowing Mikrofon Butonu (Merkez / 88px) */
+.mic-col {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
-.leave-modal-title {
-  font-size: 1.35rem;
-  font-weight: 900;
-  letter-spacing: 1px;
-  color: #ffffff;
-  text-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
-}
-
-.leave-modal-desc {
-  font-size: 0.92rem;
-  color: #cbd5e1;
-  line-height: 1.4;
-  font-weight: 500;
-}
-
-.leave-modal-sub-badge {
-  display: inline-flex;
+.mic-btn {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  background: rgba(255, 23, 68, 0.12);
-  border: 1px solid rgba(255, 23, 68, 0.35);
-  padding: 6px 12px;
-  border-radius: 10px;
-  font-size: 0.76rem;
-  font-weight: 700;
-  color: #ff8a80;
-  margin-top: 4px;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
 }
 
-.leave-modal-actions-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  width: 100%;
-  margin-top: 8px;
+.mic-btn:active {
+  transform: scale(0.94);
 }
 
-.btn-leave-cancel {
-  padding: 16px 14px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1.5px solid rgba(255, 255, 255, 0.15);
+.mic-btn.live {
+  background: radial-gradient(circle at 35% 30%, #00e676, #00897b);
+  box-shadow: 0 0 0 8px rgba(0, 230, 118, 0.15), 0 12px 35px var(--emerald-green-glow);
+  color: #060913;
+}
+
+.mic-btn.muted {
+  background: radial-gradient(circle at 35% 30%, #ff5252, #b71c1c);
+  box-shadow: 0 0 0 8px rgba(255, 42, 85, 0.15), 0 12px 35px var(--crimson-red-glow);
   color: #ffffff;
+}
+
+.mic-btn.locked {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.mic-label {
+  font-size: 12.5px;
   font-weight: 800;
-  font-size: 0.95rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  cursor: pointer;
-  transition: all 0.15s;
+  letter-spacing: 0.5px;
 }
 
-.btn-leave-cancel:active {
-  transform: scale(0.96);
-  background: rgba(255, 255, 255, 0.12);
+.mic-label.live {
+  color: var(--emerald-green);
 }
 
-.btn-leave-confirm {
-  padding: 16px 14px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #ff1744 0%, #b70928 100%);
-  border: 1.5px solid rgba(255, 255, 255, 0.25);
-  color: #ffffff;
-  font-weight: 900;
-  font-size: 0.95rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  cursor: pointer;
-  box-shadow: 0 0 25px rgba(255, 23, 68, 0.5);
-  transition: all 0.15s;
-}
-
-.btn-leave-confirm:active {
-  transform: scale(0.96);
-  box-shadow: 0 0 10px rgba(255, 23, 68, 0.3);
-}
-
-/* Animasyonlar */
-.animate-fade-in {
-  animation: fadeIn 0.25s ease-out forwards;
-}
-
-.animate-scale-up {
-  animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes scaleUp {
-  from { opacity: 0; transform: scale(0.92); }
-  to { opacity: 1; transform: scale(1); }
+.mic-label.muted {
+  color: var(--crimson-red);
 }
 
 /* =========================================================================
-   OLED BLACKOUT ECO BATTERY SAVER (%95 PİL TASARRUFU)
+   5. HIZLI AYARLAR ÇEKMECESİ (SETTINGS BOTTOM SHEET)
+   ========================================================================= */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+  z-index: 99;
+}
+
+.sheet-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: 520px;
+  margin: 0 auto;
+  background: linear-gradient(180deg, #101c30 0%, #080c14 100%);
+  border-top: 1.5px solid var(--line-strong);
+  border-radius: 28px 28px 0 0;
+  padding: 14px 20px 28px;
+  padding-bottom: max(28px, env(safe-area-inset-bottom));
+  transform: translateY(102%);
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 100;
+  box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.85);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.sheet.open {
+  transform: translateY(0);
+}
+
+.sheet-handle {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  margin: 0 auto 16px;
+  cursor: pointer;
+}
+
+.sheet-title {
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 12px;
+  color: #ffffff;
+}
+
+/* Soldan Sağa Basılarak Geçilen Kategori Tabları */
+.sheet-tabs-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  background: rgba(16, 28, 48, 0.9);
+  padding: 4px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  margin-bottom: 16px;
+}
+
+.sheet-tab-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 6px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.sheet-tab-btn:active {
+  transform: scale(0.96);
+}
+
+.sheet-tab-btn.active {
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.2) 0%, rgba(0, 145, 234, 0.15) 100%);
+  color: var(--neon-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  box-shadow: 0 0 12px var(--neon-cyan-glow);
+}
+
+.settings-tab-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.category-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.category-item-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.category-item-block:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.item-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.item-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.sheet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet-row:last-child {
+  border-bottom: none;
+}
+
+.sheet-row-left {
+  display: flex;
+  align-items: center;
+}
+
+.sheet-row .s-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  color: var(--text-1);
+  margin-right: 12px;
+  border: 1px solid var(--line);
+}
+
+.sheet-row .s-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.sheet-row .s-desc {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
+.sheet-volume-section {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.vol-percent-badge {
+  background: rgba(0, 229, 255, 0.15);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  color: var(--neon-cyan);
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+}
+
+.sheet-slider-wrap {
+  padding: 6px 0 10px;
+}
+
+.sheet-range-slider {
+  width: 100%;
+  height: 7px;
+  border-radius: 6px;
+  outline: none;
+  background: #1e293b;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.sheet-range-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 3px solid var(--neon-cyan);
+  box-shadow: 0 0 10px var(--neon-cyan);
+  cursor: pointer;
+}
+
+.slider-orange::-webkit-slider-thumb {
+  border-color: var(--electric-orange);
+  box-shadow: 0 0 10px var(--electric-orange);
+}
+
+.sheet-test-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.btn-sheet-test {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  color: var(--text-1);
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-sheet-test:active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+/* Giriş & Çıkış Aygıtı Seçimi */
+.sheet-device-section {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.device-section-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-2);
+  letter-spacing: 0.6px;
+}
+
+.device-select-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.device-label-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.sheet-device-select {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1.5px solid var(--line);
+  color: #ffffff;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.sheet-device-select:focus {
+  border-color: var(--neon-cyan);
+}
+
+.sheet-device-select option {
+  background: #101c30;
+  color: #ffffff;
+}
+
+/* =========================================================================
+   6. OLED KARARTMA MODU (TAP-TO-PEEK & SWIPE TO WAKE)
    ========================================================================= */
 .oled-blackout-overlay {
   position: fixed;
@@ -1080,79 +1380,139 @@ body {
 }
 
 .blackout-clock {
-  font-size: 4rem;
+  font-size: 4.2rem;
   font-weight: 900;
-  color: #1e293b;
-  font-family: monospace, sans-serif;
+  color: #64748b;
   letter-spacing: 2px;
+  transition: color 0.25s ease, text-shadow 0.25s ease;
 }
 
 .blackout-status-badge {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  padding: 8px 16px;
-  border-radius: var(--radius-full);
-  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 8px 20px;
+  border-radius: 999px;
+  font-size: 0.9rem;
   font-weight: 700;
-  color: #475569;
+  color: #cbd5e1;
+  transition: all 0.25s ease;
 }
 
 .blackout-pulse-dot {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background-color: #334155;
-  transition: all 0.2s;
+  background-color: var(--emerald-green);
+  box-shadow: 0 0 8px var(--emerald-green);
 }
 
 .blackout-pulse-dot.speaking {
-  background-color: var(--emerald-green);
-  box-shadow: 0 0 12px var(--emerald-green);
+  box-shadow: 0 0 16px var(--emerald-green);
+  transform: scale(1.2);
 }
 
 .blackout-speaking-tag {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   font-weight: 800;
   color: var(--emerald-green);
 }
 
-.blackout-hint {
-  margin-top: 30px;
-  font-size: 0.78rem;
-  color: #334155;
-  letter-spacing: 0.5px;
+.blackout-swipe-dock {
+  position: absolute;
+  bottom: 44px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  pointer-events: none;
+  transition: transform 0.05s ease-out, opacity 0.2s ease-out;
 }
 
-.blackout-hint strong {
-  color: #64748b;
+.swipe-arrow-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(0, 229, 255, 0.15);
+  border: 2px solid var(--neon-cyan);
+  box-shadow: 0 0 25px var(--neon-cyan-glow);
+  color: var(--neon-cyan);
+  transition: all 0.25s ease;
+}
+
+.swipe-dock-label {
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--neon-cyan);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.swipe-dock-bar {
+  width: 130px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 9999px;
+  margin-top: 2px;
+}
+
+/* ⭐ PEEK MODE ⭐ */
+.blackout-peeking .blackout-clock {
+  color: #ffffff;
+  text-shadow: 0 0 30px var(--neon-cyan-glow);
+}
+
+.blackout-peeking .blackout-status-badge {
+  background: rgba(0, 229, 255, 0.18);
+  border-color: var(--neon-cyan);
+  color: #ffffff;
+  box-shadow: 0 0 25px var(--neon-cyan-glow);
+}
+
+.blackout-peeking .swipe-arrow-wrap {
+  background: rgba(0, 229, 255, 0.35);
+  border-color: #ffffff;
+  color: #ffffff;
+  box-shadow: 0 0 35px var(--neon-cyan);
+}
+
+.blackout-peeking .swipe-dock-label {
+  color: #ffffff;
+  text-shadow: 0 0 12px var(--neon-cyan);
 }
 
 /* =========================================================================
-   TOUCH SHIELD LOCK (GİDON YANLIŞLIKLA BASMA KORUMASI)
+   7. GİDON DOKUNMA KİLİDİ & ÇIKIŞ MODALLARI
    ========================================================================= */
 .touch-lock-shield-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(90deg, rgba(255, 23, 68, 0.15) 0%, rgba(255, 107, 0, 0.15) 100%);
-  border: 1.5px solid rgba(255, 23, 68, 0.4);
+  background: rgba(255, 42, 85, 0.15);
+  border: 1px solid rgba(255, 42, 85, 0.4);
   padding: 8px 14px;
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 15px rgba(255, 23, 68, 0.15);
+  border-radius: 14px;
+  margin-top: 8px;
 }
 
 .touch-lock-info {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.82rem;
-  color: var(--text-primary);
+  font-size: 0.85rem;
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .btn-hold-unlock {
@@ -1160,15 +1520,13 @@ body {
   overflow: hidden;
   background: rgba(255, 255, 255, 0.08);
   border: 1.5px solid rgba(255, 255, 255, 0.2);
-  padding: 8px 16px;
-  border-radius: 12px;
+  padding: 7px 14px;
+  border-radius: 10px;
   font-weight: 800;
   font-size: 0.78rem;
   color: #ffffff;
   cursor: pointer;
-  white-space: nowrap;
   user-select: none;
-  touch-action: none;
 }
 
 .hold-progress-fill {
@@ -1176,7 +1534,7 @@ body {
   left: 0;
   top: 0;
   bottom: 0;
-  background: linear-gradient(90deg, #00e5ff, #00e676);
+  background: linear-gradient(90deg, var(--neon-cyan), var(--emerald-green));
   z-index: 1;
 }
 
@@ -1185,37 +1543,170 @@ body {
   z-index: 2;
 }
 
-.btn-locked-opacity {
-  opacity: 0.4 !important;
-  filter: grayscale(0.6) !important;
-  pointer-events: none !important;
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(12px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
 }
 
-.btn-lock-active {
-  background: rgba(255, 23, 68, 0.15) !important;
-  border-color: var(--crimson-red) !important;
-  color: var(--crimson-red) !important;
+.modal-leave-cyber-card {
+  position: relative;
+  max-width: 380px;
+  width: 90%;
+  background: linear-gradient(180deg, #131c2c 0%, #0a111a 100%);
+  border: 1.5px solid rgba(255, 42, 85, 0.4);
+  border-radius: 26px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), 0 0 30px var(--crimson-red-glow);
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
 }
 
-.btn-eco-dim {
-  background: rgba(0, 229, 255, 0.1) !important;
-  border-color: rgba(0, 229, 255, 0.3) !important;
+.leave-modal-close-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  color: var(--text-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
 
-/* Yardımcı Sınıflar */
+.leave-icon-hero-wrap {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: rgba(255, 42, 85, 0.15);
+  border: 1.5px solid rgba(255, 42, 85, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--crimson-red);
+}
+
+.leave-modal-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.leave-modal-desc {
+  font-size: 0.88rem;
+  color: var(--text-1);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.leave-modal-sub-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: var(--crimson-red);
+  background: rgba(255, 42, 85, 0.12);
+  padding: 4px 10px;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.leave-modal-actions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.btn-leave-cancel,
+.btn-leave-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 14px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.btn-leave-cancel {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  color: #ffffff;
+}
+
+.btn-leave-confirm {
+  background: linear-gradient(135deg, var(--crimson-red) 0%, #b71c1c 100%);
+  border: none;
+  color: #ffffff;
+  box-shadow: 0 6px 20px var(--crimson-red-glow);
+}
+
+.cockpit-toast {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(16, 28, 48, 0.95);
+  border: 1px solid var(--line-strong);
+  color: #ffffff;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  z-index: 80;
+  white-space: nowrap;
+}
+
+/* =========================================================================
+   8. TEK SEFERLİK GİRİŞ GEÇİŞLERİ (Sıfır Pil Tüketimi / Infinite Yok)
+   ========================================================================= */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleUp {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.22s ease-out forwards;
+}
+
+.animate-scale-up {
+  animation: scaleUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-down {
+  animation: slideDown 0.22s ease-out forwards;
+}
+
 .text-neon { color: var(--neon-cyan) !important; }
-.text-orange { color: var(--electric-orange) !important; }
 .text-emerald { color: var(--emerald-green) !important; }
+.text-orange { color: var(--electric-orange) !important; }
 .text-crimson { color: var(--crimson-red) !important; }
-.text-yellow { color: var(--amber-yellow) !important; }
-.flex-center { display: flex; align-items: center; justify-content: center; }
-.gap-1 { gap: 4px; }
-.gap-2 { gap: 8px; }
-.hide-mobile {
-  display: none;
-}
-@media (min-width: 480px) {
-  .hide-mobile {
-    display: inline;
-  }
-}

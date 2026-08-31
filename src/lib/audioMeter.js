@@ -1,9 +1,10 @@
-// Web Audio API Analyser tabanlı ultra-hafif ses seviyesi göstergesi
+// RideTalk — Ultra-Hafif Web Audio API Ses Seviyesi Ölçer (AudioLevelMeter)
 // Ses akışına müdahale etmez, tamponlama veya gecikme yaratmaz.
+// Mute ve Eko modlarında CPU tüketimini %0'a indirmek için duraklatılabilir.
 
 let sharedAudioCtx = null;
 
-function getSharedAudioContext() {
+export function getSharedAudioContext() {
   if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (AudioContextClass) {
@@ -24,6 +25,7 @@ export class AudioLevelMeter {
     this.analyser = null;
     this.animationId = null;
     this.isDestroyed = false;
+    this.isPaused = false;
 
     this.init();
   }
@@ -37,8 +39,8 @@ export class AudioLevelMeter {
 
       this.source = audioCtx.createMediaStreamSource(this.stream);
       this.analyser = audioCtx.createAnalyser();
-      this.analyser.fftSize = 64; // Ultra hızlı, minik 32-bin FFT
-      this.analyser.smoothingTimeConstant = 0.3;
+      this.analyser.fftSize = 32; // Ultra hafif 16-bin FFT (Minimum CPU)
+      this.analyser.smoothingTimeConstant = 0.25;
 
       this.source.connect(this.analyser);
 
@@ -49,21 +51,23 @@ export class AudioLevelMeter {
       const update = (time) => {
         if (this.isDestroyed) return;
 
-        // Saniyede 15 kare güncelle (CPU ve ses işlemcisini yormamak için)
-        if (time - lastCheck > 65) {
-          lastCheck = time;
-          this.analyser.getByteFrequencyData(dataArray);
+        if (!this.isPaused) {
+          // Saniyede ~15 kare güncelle (Ekran için pürüzsüz ve sıfır CPU)
+          if (time - lastCheck > 65) {
+            lastCheck = time;
+            this.analyser.getByteFrequencyData(dataArray);
 
-          let sum = 0;
-          for (let i = 0; i < bufferLength; i++) {
-            sum += dataArray[i];
-          }
-          const avg = sum / bufferLength;
-          const normalized = Math.min(100, Math.round((avg / 128) * 100));
-          const isSpeaking = normalized > 12;
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+              sum += dataArray[i];
+            }
+            const avg = sum / bufferLength;
+            const normalized = Math.min(100, Math.round((avg / 128) * 100));
+            const isSpeaking = normalized > 10;
 
-          if (this.onLevelChange) {
-            this.onLevelChange(normalized, isSpeaking);
+            if (this.onLevelChange) {
+              this.onLevelChange(normalized, isSpeaking);
+            }
           }
         }
 
@@ -74,10 +78,18 @@ export class AudioLevelMeter {
     } catch (_) {}
   }
 
+  setPaused(paused) {
+    this.isPaused = !!paused;
+    if (paused && this.onLevelChange) {
+      this.onLevelChange(0, false);
+    }
+  }
+
   destroy() {
     this.isDestroyed = true;
     if (this.animationId) {
       cancelAnimationFrame(this.animationId);
+      this.animationId = null;
     }
     if (this.source) {
       try {

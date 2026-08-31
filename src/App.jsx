@@ -1,8 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import RoomCreate from './components/RoomCreate.jsx';
-import RoomJoin from './components/RoomJoin.jsx';
 import ActiveRoom from './components/ActiveRoom.jsx';
-import ServerSettingsModal from './components/ServerSettingsModal.jsx';
 import { SignalingClient } from './lib/signaling.js';
 import { FirebaseSignalingClient, isFirebaseConfigured } from './lib/firebaseSignaling.js';
 import { MeshManager } from './lib/meshManager.js';
@@ -20,19 +17,60 @@ import {
 } from './lib/announcer.js';
 import { keepScreenAwake, releaseScreenAwake, onWakeLockStatusChange } from './lib/wakeLock.js';
 import { watchNetworkChanges } from './lib/networkWatcher.js';
-import { Radio, PlusCircle, LogIn, Shield, Wifi, Volume2, Settings, Zap, User, X, Timer } from 'lucide-react';
+import {
+  Radio,
+  Wifi,
+  Zap,
+  User,
+  X,
+  Timer,
+  ChevronDown,
+  RefreshCw,
+} from 'lucide-react';
 import './App.css';
+
+const COOL_CALLSIGNS = [
+  'Gece Kartalı',
+  'Kara Şimşek',
+  'Gölge Hayalet',
+  'Fırtına',
+  'Kızıl Ejder',
+  'Kara Panter',
+  'Asfalt Avcısı',
+  'Son Samuray',
+  'Vahşi Boğa',
+  'Çöl Tilkisi',
+  'Gök Kurdu',
+  'Yol Kaptanı',
+  'Gökdoğan',
+  'Asil Pars',
+  'Siyah İnci',
+  'Turbo Roket',
+  'Sessiz Gölge',
+  'Demir Süvari',
+  'Pulsar',
+  'Rüzgar Savaşçısı',
+  'Hayalet Sürücü',
+  'Apex Kralı',
+  'Gece Kuşu',
+  'Kızıl Şahin',
+];
+
+function generateCoolBikerName() {
+  const base = COOL_CALLSIGNS[Math.floor(Math.random() * COOL_CALLSIGNS.length)];
+  const num = Math.floor(10 + Math.random() * 90);
+  return `${base} ${num}`;
+}
 
 export default function App() {
   const [view, setView] = useState('home');
   const [roomData, setRoomData] = useState(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState(null);
-  const [initialRoomCode, setInitialRoomCode] = useState('');
-  const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   const [driverName, setDriverName] = useState(() => {
-    return localStorage.getItem('ridetalk_name') || 'Sürücü ' + Math.floor(10 + Math.random() * 90);
+    return localStorage.getItem('ridetalk_name') || generateCoolBikerName();
   });
   const [autoConnectOnLoad, setAutoConnectOnLoad] = useState(() => {
     return localStorage.getItem('ridetalk_autoconnect') === 'true';
@@ -43,13 +81,9 @@ export default function App() {
   const isAutoCancelledRef = useRef(false);
 
   const [peers, setPeers] = useState({});
-  const [localVolume, setLocalVolume] = useState(0);
-  const [localIsSpeaking, setLocalIsSpeaking] = useState(false);
-  const [peerVolumes, setPeerVolumes] = useState({});
   const [isMuted, setIsMuted] = useState(false);
   const [isWakeLockActive, setIsWakeLockActive] = useState(false);
   const [stats, setStats] = useState({ isHotspotMode: true, avgRtt: 12 });
-  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [toastMessage, setToastMessage] = useState(null);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
 
@@ -62,22 +96,19 @@ export default function App() {
   const showToast = useCallback((msg) => {
     setToastMessage(msg);
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 4000);
+    toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 3500);
   }, []);
 
   const handleLeaveRoomDirect = useCallback(() => {
-    // Odadan manuel çıkıldığında otomatik bağlanma döngüsünü durdur
     isAutoCancelledRef.current = true;
     setAutoCountdown(null);
     if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
 
-    // 1. ANINDA Arayüzü Ana Sayfaya Döndür (0ms)
     setView('home');
     setRoomData(null);
     setPeers({});
     showToast('İnterkomdan ayrıldınız');
 
-    // 2. Ses ve Donanım Kaynaklarını Kapat
     if (meshRef.current) {
       try {
         meshRef.current.destroy();
@@ -99,7 +130,7 @@ export default function App() {
     releaseScreenAwake();
   }, [showToast]);
 
-  // Geri tuşu koruması
+  // Geri tuşu koruması (Yanlışlıkla çıkışı engeller)
   useEffect(() => {
     if (view === 'active') {
       const beforeUnload = (e) => {
@@ -121,39 +152,18 @@ export default function App() {
     }
   }, [view, handleLeaveRoomDirect]);
 
-  // URL'den oda kodu varsa al
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('room');
-    if (code) {
-      setInitialRoomCode(code.toUpperCase());
-      setView('join');
-    }
-  }, []);
-
   useEffect(() => {
     onWakeLockStatusChange((a) => setIsWakeLockActive(a));
   }, []);
 
-  useEffect(() => {
-    const on = () => setIsOnline(true);
-    const off = () => setIsOnline(false);
-    window.addEventListener('online', on);
-    window.addEventListener('offline', off);
-    return () => {
-      window.removeEventListener('online', on);
-      window.removeEventListener('offline', off);
-    };
-  }, []);
-
-  const ensureAudioUnlocked = () => {
+  const ensureAudioUnlocked = useCallback(() => {
     if (!audioUnlocked) {
       const ctx = getAudioContext();
       if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
       preloadAllSounds().catch(() => {});
       setAudioUnlocked(true);
     }
-  };
+  }, [audioUnlocked]);
 
   const getSignalingClient = useCallback(() => {
     if (!signalingRef.current) {
@@ -167,7 +177,7 @@ export default function App() {
   }, []);
 
   // =====================================================
-  //  MESH VE SES YÖNETİCİSİ BAŞLAT
+  //  MESH VE SES YÖNETİCİSİ BAŞLAT (SIFIR RE-RENDER)
   // =====================================================
   const startMeshSession = useCallback(
     async (currentRoomData, signaling, existingPeers = []) => {
@@ -179,15 +189,16 @@ export default function App() {
         onPeerStateChange: (peerId, info) => {
           setPeers((prev) => ({
             ...prev,
-            [peerId]: { name: info.name, state: info.state, isMuted: info.isMuted, stats: info.stats },
+            [peerId]: {
+              name: info.name,
+              state: info.state,
+              isMuted: info.isMuted,
+              stats: {
+                ...info.stats,
+                distance: info.distance,
+              },
+            },
           }));
-        },
-        onPeerVolumeChange: (peerId, level, isSpeaking) => {
-          setPeerVolumes((prev) => ({ ...prev, [peerId]: { level, isSpeaking } }));
-        },
-        onLocalVolumeChange: (level, isSpeaking) => {
-          setLocalVolume(level);
-          setLocalIsSpeaking(isSpeaking);
         },
         onPeerDisconnect: (peerId) => {
           playSomeoneLeftSound();
@@ -200,6 +211,11 @@ export default function App() {
         onHornReceived: (_, name) => {
           playAlertTone('horn');
           showToast(`⚠️ ${name || 'Sürücü'} ikaz tonu gönderdi!`);
+        },
+        onDistanceWarning: (peerId, name, distance) => {
+          playAlertTone('horn');
+          speakText(`${name || 'Sürücü'} gruptan uzaklaştı, ${Math.round(distance)} metre. Bağlantı kopabilir.`);
+          showToast(`⚠️ ${name || 'Sürücü'} uzaklaştı (${Math.round(distance)}m)`);
         },
         onStatsUpdate: (s) => setStats(s),
         onReconnectionFailed: () => {},
@@ -302,7 +318,7 @@ export default function App() {
         setIsConnecting(false);
       }
     },
-    [driverName, getSignalingClient, showToast, startMeshSession]
+    [driverName, ensureAudioUnlocked, getSignalingClient, showToast, startMeshSession]
   );
 
   // ⭐ GERİ SAYIM (3.. 2.. 1..) İLE GÜVENLİ OTOMATİK BAĞLANMA ⭐
@@ -336,7 +352,6 @@ export default function App() {
     }
   }, [autoConnectOnLoad, view, isConnecting, roomData, handleAutoConnect]);
 
-  // Geri sayımı iptal etme
   const cancelAutoCountdown = () => {
     isAutoCancelledRef.current = true;
     setAutoCountdown(null);
@@ -344,25 +359,54 @@ export default function App() {
     showToast('Otomatik bağlanma iptal edildi');
   };
 
-  const handleToggleMute = () => {
-    const next = !isMuted;
-    setIsMuted(next);
-    if (meshRef.current) meshRef.current.setMute(next);
-    if (next) {
-      playMuteSound();
-    } else {
-      playUnmuteSound();
-    }
-    showToast(next ? 'Mikrofon Kapatıldı' : 'Mikrofon Açık');
+  const handleRandomizeName = () => {
+    const newName = generateCoolBikerName();
+    setDriverName(newName);
+    localStorage.setItem('ridetalk_name', newName);
+    showToast(`Çağrı adı: ${newName} 🏍️`);
   };
 
-  const handleSendHorn = () => {
+  const handleToggleMute = useCallback(() => {
+    setIsMuted((prev) => {
+      const next = !prev;
+      if (meshRef.current) meshRef.current.setMute(next);
+      if (next) {
+        playMuteSound();
+      } else {
+        playUnmuteSound();
+      }
+      showToast(next ? 'Mikrofon Kapatıldı' : 'Mikrofon Açık');
+      return next;
+    });
+  }, [showToast]);
+
+  const handleSendHorn = useCallback(() => {
     if (meshRef.current) {
       meshRef.current.sendHornAlert();
       playAlertTone('horn');
       showToast('İkaz tonu gönderildi ⚠️');
     }
-  };
+  }, [showToast]);
+
+  const handleIntercomVolumeChange = useCallback((vol) => {
+    if (meshRef.current) {
+      meshRef.current.setIncomingVolume(vol);
+    }
+  }, []);
+
+  const handleAudioInputDeviceChange = useCallback(async (deviceId) => {
+    if (meshRef.current) {
+      await meshRef.current.changeAudioInputDevice(deviceId);
+      showToast('Mikrofon değiştirildi 🎤');
+    }
+  }, [showToast]);
+
+  const handleAudioOutputDeviceChange = useCallback(async (deviceId) => {
+    if (meshRef.current) {
+      await meshRef.current.setAudioOutputDevice(deviceId);
+      showToast('Hoparlör/Kask değiştirildi 🎧');
+    }
+  }, [showToast]);
 
   return (
     <div className="app-container" onClick={ensureAudioUnlocked}>
@@ -370,302 +414,159 @@ export default function App() {
       <div className="ambient-glow orange-glow"></div>
 
       {view === 'home' && (
-        <div className="lobby-wrapper animate-fade-in">
-          <header className="lobby-brand">
-            <div className="brand-logo-wrap">
-              <Radio size={36} className="brand-icon" />
-              <div className="brand-pulse-ring"></div>
+        <div className="screen join-screen animate-fade-in">
+          {/* LOGO & BAŞLIK */}
+          <div className="join-top">
+            <div className="logo-mark">
+              <Radio size={26} strokeWidth={2.4} />
             </div>
-            <h1 className="brand-title">RideTalk</h1>
-            <p className="brand-tagline">Motosiklet İçin Otomatik Full-Mesh İnterkom</p>
-          </header>
-
-          <div className="feature-pill-row">
-            <div className="feat-pill">
-              <Shield size={14} className="text-emerald" />
-              <span>Vercel + Firebase</span>
-            </div>
-            <div className="feat-pill">
-              <Wifi size={14} className="text-orange" />
-              <span>Otomatik Eşleşme</span>
-            </div>
-            <div className="feat-pill">
-              <Volume2 size={14} className="text-cyan" />
-              <span>DSP Filtresi</span>
+            <div className="wordmark">RIDETALK</div>
+            <div className="tagline">Grup motosiklet interkomu</div>
+            <div className="feature-pill">
+              <Zap size={13} strokeWidth={2.4} />
+              <span>İnternet gerekmez</span>
             </div>
           </div>
 
-          {/* Sürücü Adı Girişi */}
-          <div
-            className="driver-name-card"
-            style={{
-              background: 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '16px',
-              padding: '14px 18px',
-              marginBottom: '14px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px',
-            }}
-          >
-            <label style={{ fontSize: '0.8rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <User size={14} className="text-neon" />
-              <span>Kask / Sürücü Adınız:</span>
-            </label>
-            <input
-              type="text"
-              className="input-text"
-              value={driverName}
-              onChange={(e) => {
-                setDriverName(e.target.value);
-                localStorage.setItem('ridetalk_name', e.target.value);
-              }}
-              placeholder="Örn: Ahmet, Motorcu-1"
-              maxLength={20}
-              style={{
-                background: 'rgba(0,0,0,0.4)',
-                border: '1px solid rgba(0, 229, 255, 0.3)',
-                padding: '10px 14px',
-                borderRadius: '10px',
-                color: '#fff',
-                fontSize: '1rem',
-                fontWeight: '700',
-              }}
-            />
+          {/* KATILIM FORMU */}
+          <div className="join-form">
+            <div className="field">
+              <div className="field-label">ÇAĞRI ADINIZ</div>
+              <div className="field-row">
+                <input
+                  type="text"
+                  value={driverName}
+                  onChange={(e) => {
+                    setDriverName(e.target.value);
+                    localStorage.setItem('ridetalk_name', e.target.value);
+                  }}
+                  placeholder="Örn: Kara Şimşek, Gece Kartalı"
+                  maxLength={22}
+                />
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={handleRandomizeName}
+                >
+                  🎲 Rastgele
+                </button>
+              </div>
+            </div>
 
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', cursor: 'pointer', fontSize: '0.78rem', color: '#cbd5e1' }}>
-              <input
-                type="checkbox"
-                checked={autoConnectOnLoad}
-                onChange={(e) => {
-                  const val = e.target.checked;
-                  setAutoConnectOnLoad(val);
-                  localStorage.setItem('ridetalk_autoconnect', val ? 'true' : 'false');
-                  if (!val) {
+            {/* Otomatik Bağlan Switch */}
+            <div className="toggle-row">
+              <div className="toggle-text">
+                <div className="t-label">Açılışta otomatik bağlan</div>
+                <div className="t-desc">3 saniyelik geri sayımla</div>
+              </div>
+              <div
+                className={`switch ${autoConnectOnLoad ? 'on' : ''}`}
+                onClick={() => {
+                  const next = !autoConnectOnLoad;
+                  setAutoConnectOnLoad(next);
+                  localStorage.setItem('ridetalk_autoconnect', next ? 'true' : 'false');
+                  if (!next) {
                     cancelAutoCountdown();
                   } else {
                     isAutoCancelledRef.current = false;
                   }
                 }}
-                style={{ width: '16px', height: '16px', accentColor: '#00e5ff' }}
               />
-              <span>Sayfa açıldığında otomatik bağlan (3sn Geri Sayım)</span>
-            </label>
-          </div>
-
-          {/* ⭐ 3.. 2.. 1.. GERİ SAYIM ŞERİDİ (İPTAL BUTONLU) ⭐ */}
-          {autoCountdown !== null && (
-            <div
-              className="animate-scale-up"
-              style={{
-                width: '100%',
-                background: 'linear-gradient(90deg, rgba(0, 229, 255, 0.2) 0%, rgba(0, 230, 118, 0.2) 100%)',
-                border: '1.5px solid #00e5ff',
-                borderRadius: '16px',
-                padding: '12px 18px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                boxShadow: '0 0 20px rgba(0, 229, 255, 0.3)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Timer size={22} className="text-neon animate-pulse" />
-                <span style={{ fontSize: '0.92rem', fontWeight: '800', color: '#ffffff' }}>
-                  Bağlanılıyor: <strong style={{ color: '#00e5ff', fontSize: '1.15rem' }}>{autoCountdown}</strong> sn...
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={cancelAutoCountdown}
-                style={{
-                  background: 'rgba(255, 23, 68, 0.2)',
-                  border: '1px solid rgba(255, 23, 68, 0.5)',
-                  color: '#ff8a80',
-                  padding: '6px 14px',
-                  borderRadius: '10px',
-                  fontSize: '0.8rem',
-                  fontWeight: '800',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                }}
-              >
-                <X size={14} />
-                <span>İptal Et</span>
-              </button>
             </div>
-          )}
 
-          {/* ⭐ TEK TUŞLA OTOMATİK BAĞLAN BUTONU ⭐ */}
-          <div className="lobby-cards-grid">
+            {/* Geri Sayım Şeridi */}
+            {autoCountdown !== null && (
+              <div className="biker-countdown-banner animate-scale-up">
+                <div className="countdown-info">
+                  <Timer size={18} className="text-cyan" />
+                  <span>
+                    Bağlanılıyor: <strong className="countdown-number">{autoCountdown}</strong> sn
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn-countdown-cancel"
+                  onClick={cancelAutoCountdown}
+                >
+                  <X size={13} />
+                  <span>İptal</span>
+                </button>
+              </div>
+            )}
+
+            {/* Ana Buton: Telsize Bağlan */}
             <button
               type="button"
-              className="lobby-action-card card-hotspot-main"
+              className={`cta-btn ${isConnecting ? 'loading' : ''}`}
               onClick={() => handleAutoConnect('MOTO-RIDE')}
               disabled={isConnecting}
-              style={{
-                gridColumn: '1 / -1',
-                background: 'linear-gradient(135deg, rgba(0, 229, 255, 0.2) 0%, rgba(255, 107, 0, 0.25) 100%)',
-                border: '2px solid #00e5ff',
-                boxShadow: '0 0 25px rgba(0, 229, 255, 0.35)',
-                minHeight: '110px',
-                padding: '18px',
-              }}
             >
-              <div className="card-action-icon" style={{ color: '#00e5ff' }}>
-                {isConnecting ? <Zap size={40} className="animate-pulse text-orange" /> : <Radio size={40} />}
-              </div>
-              <div className="card-action-text">
-                <h3 style={{ color: '#00e5ff', fontSize: '1.25rem', fontWeight: '900', letterSpacing: '0.5px' }}>
-                  {isConnecting ? 'Telsize Bağlanılıyor...' : '🚀 TELSİZE BAĞLAN (OTOMATİK)'}
-                </h3>
-                <p style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>
-                  Hotspot veya internetteki tüm sürücülerle anında aynı odaya girip konuşun. Kod yok, QR yok!
-                </p>
-              </div>
+              <Radio size={18} strokeWidth={2.3} />
+              <span>{isConnecting ? 'Bağlanılıyor...' : 'Telsize Bağlan'}</span>
             </button>
+            <div className="cta-sub">Tek dokunuşla gruba katıl</div>
 
-            {/* Özel Oda Seçenekleri (İsteğe Bağlı) */}
-            <button
-              type="button"
-              className="lobby-action-card card-create"
-              onClick={() => {
-                cancelAutoCountdown();
-                setError(null);
-                setRoomData(null);
-                setView('create');
-              }}
-            >
-              <div className="card-action-icon">
-                <PlusCircle size={26} />
+            {/* İnternetsiz Nasıl Çalışır? Accordion */}
+            <div className="disclosure">
+              <div
+                className={`disclosure-head ${isGuideOpen ? 'open' : ''}`}
+                onClick={() => setIsGuideOpen(!isGuideOpen)}
+              >
+                <span>İnternetsiz nasıl çalışır?</span>
+                <ChevronDown size={14} className="disclosure-arrow" />
               </div>
-              <div className="card-action-text">
-                <h3>Özel Oda Aç</h3>
-                <p>Farklı bir oda koduyla grup kur</p>
+              <div className={`disclosure-body ${isGuideOpen ? 'open' : ''}`}>
+                <div className="step">
+                  <div className="step-num">1</div>
+                  <div>
+                    <b>Hotspot açın.</b> Grup lideri telefonunda Wi-Fi hotspot başlatır.
+                  </div>
+                </div>
+                <div className="step">
+                  <div className="step-num">2</div>
+                  <div>
+                    <b>Ağa katılın.</b> Diğer sürücüler bu ağa bağlanır.
+                  </div>
+                </div>
+                <div className="step">
+                  <div className="step-num">3</div>
+                  <div>
+                    <b>Konuşun.</b> Ses, internet olmadan telefonlar arasında akar.
+                  </div>
+                </div>
               </div>
-            </button>
-
-            <button
-              type="button"
-              className="lobby-action-card card-join"
-              onClick={() => {
-                cancelAutoCountdown();
-                setError(null);
-                setView('join');
-              }}
-            >
-              <div className="card-action-icon">
-                <LogIn size={26} />
-              </div>
-              <div className="card-action-text">
-                <h3>Koda Göre Katıl</h3>
-                <p>Belirli bir oda koduna gir</p>
-              </div>
-            </button>
+            </div>
           </div>
 
+          {/* HATA BANNERI */}
           {error && (
-            <div
-              className="error-banner"
-              style={{
-                margin: '12px 0',
-                padding: '12px',
-                borderRadius: '12px',
-                background: 'rgba(255,23,68,0.15)',
-                border: '1px solid rgba(255,23,68,0.4)',
-                color: '#ff8a80',
-                fontSize: '0.85rem',
-                textAlign: 'center',
-              }}
-            >
-              {error}
+            <div className="biker-error-banner animate-slide-down">
+              <span>{error}</span>
             </div>
           )}
 
-          <footer className="lobby-footer" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <span>Sürüş sırasında telefonunuzu gidon tutucusunda açık tutun.</span>
-            <button
-              type="button"
-              className="btn-text-settings"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '0.75rem',
-                color: '#64748b',
-                background: 'rgba(255,255,255,0.04)',
-                padding: '6px 12px',
-                borderRadius: '9999px',
-                border: '1px solid rgba(255,255,255,0.06)',
-              }}
-              onClick={() => {
-                cancelAutoCountdown();
-                setIsServerSettingsOpen(true);
-              }}
-            >
-              <Settings size={13} />
-              <span>Ayarlar</span>
-            </button>
-          </footer>
+          {/* SÜRÜŞ İPUCU */}
+          <div className="join-footer">
+            Sürüş boyunca telefonunuzu görünür bir yerde tutun.
+          </div>
         </div>
       )}
 
-      <ServerSettingsModal
-        isOpen={isServerSettingsOpen}
-        onClose={() => setIsServerSettingsOpen(false)}
-        onSave={() => {
-          if (signalingRef.current) {
-            signalingRef.current.disconnect();
-            signalingRef.current = null;
-          }
-          showToast('Ayarlar güncellendi');
-        }}
-      />
-
-      {view === 'create' && (
-        <div className="view-wrapper animate-fade-in">
-          <RoomCreate
-            onStartRoom={() => handleAutoConnect('MOTO-RIDE')}
-            isConnecting={isConnecting}
-            error={error}
-            roomData={roomData}
-            onEnterActiveRoom={() => setView('active')}
-            onBack={() => setView('home')}
-          />
-        </div>
-      )}
-
-      {view === 'join' && (
-        <div className="view-wrapper animate-fade-in">
-          <RoomJoin
-            initialRoomCode={initialRoomCode}
-            onJoinRoom={(code) => handleAutoConnect(code)}
-            isConnecting={isConnecting}
-            error={error}
-            onBack={() => setView('home')}
-          />
-        </div>
-      )}
-
+      {/* AKTİF SÜRÜŞ KOKPİTİ */}
       {view === 'active' && roomData && (
         <ActiveRoom
           roomCode={roomData.roomCode}
           selfName={roomData.name}
           peers={peers}
-          localVolume={localVolume}
-          localIsSpeaking={localIsSpeaking}
-          peerVolumes={peerVolumes}
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
           onSendHorn={handleSendHorn}
           onLeaveRoom={handleLeaveRoomDirect}
+          onIntercomVolumeChange={handleIntercomVolumeChange}
+          onAudioInputDeviceChange={handleAudioInputDeviceChange}
+          onAudioOutputDeviceChange={handleAudioOutputDeviceChange}
           stats={stats}
           isWakeLockActive={isWakeLockActive}
-          isOnline={isOnline}
           toastMessage={toastMessage}
         />
       )}

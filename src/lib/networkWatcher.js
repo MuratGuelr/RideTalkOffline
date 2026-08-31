@@ -1,5 +1,7 @@
-// Ağ arayüzü değişikliklerini izle
-// Hotspot geçişinde HIZLA ICE Restart tetikle
+// RideTalk — Olay Güdümlü Ağ Arayüzü Takipçisi (NetworkWatcher)
+// CPU ve pil tasarrufu için arka planda polling YAPMAZ.
+// Sistem seviyesindeki ağ arayüzü ve Wi-Fi değişimlerini (Hotspot geçişi)
+// doğrudan tarayıcı olayları üzerinden yakalar.
 
 export function watchNetworkChanges(onNetworkChange) {
   if (typeof window === 'undefined') return () => {};
@@ -7,59 +9,48 @@ export function watchNetworkChanges(onNetworkChange) {
   let debounceTimer = null;
 
   const trigger = (reason) => {
-    // 300ms debounce - ama çok hızlı tepki ver
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      console.log(`[NetworkWatcher] ⚡ Ağ değişimi algılandı: ${reason}`);
+      console.log(`[NetworkWatcher] ⚡ Ağ arayüzü değişimi algılandı: ${reason}`);
       if (typeof onNetworkChange === 'function') {
         onNetworkChange(reason);
       }
-    }, 300);
+    }, 250);
   };
 
-  // 1. Connection API (en güvenilir)
-  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  const connectionHandler = () => trigger('connection-api');
+  // 1. Network Information API (Mobil/Wi-Fi/Hotspot tür değişimi)
+  const connection =
+    navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const connectionHandler = () => trigger('connection-change');
   if (connection) {
-    connection.addEventListener('change', connectionHandler);
+    try {
+      connection.addEventListener('change', connectionHandler);
+    } catch (_) {}
   }
 
-  // 2. Online/Offline olayları
+  // 2. Tarayıcı Online / Offline durum geçişleri
   const onlineHandler = () => trigger('online');
   const offlineHandler = () => trigger('offline');
   window.addEventListener('online', onlineHandler);
   window.addEventListener('offline', offlineHandler);
 
-  // 3. IP değişimi tespiti (her 3sn yerel IP kontrolü)
-  let lastLocalIp = '';
-  const ipCheckInterval = setInterval(async () => {
-    try {
-      const pc = new RTCPeerConnection({ iceServers: [] });
-      pc.createDataChannel('');
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      const sdp = pc.localDescription.sdp;
-      const ipMatch = sdp.match(/c=IN IP4 (\d+\.\d+\.\d+\.\d+)/);
-      const currentIp = ipMatch ? ipMatch[1] : '';
-
-      pc.close();
-
-      if (lastLocalIp && currentIp && lastLocalIp !== currentIp) {
-        console.log(`[NetworkWatcher] IP değişti: ${lastLocalIp} → ${currentIp}`);
-        trigger('ip-change');
-      }
-      lastLocalIp = currentIp;
-    } catch (_) {}
-  }, 3000);
+  // 3. Ekran uyanma / sayfa odaklanma (Telefon cebden çıktığında veya kilit açıldığında)
+  const visibilityHandler = () => {
+    if (document.visibilityState === 'visible') {
+      trigger('visibility-resume');
+    }
+  };
+  document.addEventListener('visibilitychange', visibilityHandler);
 
   return () => {
     if (debounceTimer) clearTimeout(debounceTimer);
-    clearInterval(ipCheckInterval);
     if (connection) {
-      try { connection.removeEventListener('change', connectionHandler); } catch (_) {}
+      try {
+        connection.removeEventListener('change', connectionHandler);
+      } catch (_) {}
     }
     window.removeEventListener('online', onlineHandler);
     window.removeEventListener('offline', offlineHandler);
+    document.removeEventListener('visibilitychange', visibilityHandler);
   };
 }

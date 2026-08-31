@@ -77,11 +77,27 @@ export async function preloadAllSounds() {
   ]);
 }
 
+let alertVolume = parseFloat(typeof localStorage !== 'undefined' ? localStorage.getItem('ridetalk_alert_vol') || '0.4' : '0.4');
+
+export function setAlertVolume(vol) {
+  alertVolume = Math.max(0, Math.min(1, vol));
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('ridetalk_alert_vol', alertVolume.toString());
+  }
+}
+
+export function getAlertVolume() {
+  return alertVolume;
+}
+
 export async function playSoundFile(filename) {
   try {
+    if (alertVolume <= 0.01) return; // Sessiz
+
     const ctx = getAudioContext();
     if (!ctx) {
       const fallbackAudio = new Audio(`/sounds/${filename}`);
+      fallbackAudio.volume = alertVolume;
       fallbackAudio.play().catch(() => {});
       return;
     }
@@ -99,18 +115,20 @@ export async function playSoundFile(filename) {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       const gainNode = ctx.createGain();
-      gainNode.gain.value = 1.0;
+      gainNode.gain.value = alertVolume * 0.7; // Rahatsız etmeyecek yumuşak ses
       source.connect(gainNode);
       gainNode.connect(ctx.destination);
       source.start(0);
     } else {
       const fallbackAudio = new Audio(`/sounds/${filename}`);
+      fallbackAudio.volume = alertVolume;
       fallbackAudio.play().catch(() => {});
     }
   } catch (err) {
     console.warn(`[Announcer] Ses çalma hatası (${filename}):`, err.message);
     try {
       const fallbackAudio = new Audio(`/sounds/${filename}`);
+      fallbackAudio.volume = alertVolume;
       fallbackAudio.play().catch(() => {});
     } catch (_) {}
   }
@@ -167,12 +185,13 @@ export function playAlertTone(type = 'beep') {
     const now = ctx.currentTime;
 
     if (type === 'horn') {
+      const vol = alertVolume * 0.25; // Yumuşak ikaz seviyesi
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(880, now);
-      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.setValueAtTime(vol, now);
       gain.gain.setValueAtTime(0.0, now + 0.12);
-      gain.gain.setValueAtTime(0.3, now + 0.18);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+      gain.gain.setValueAtTime(vol, now + 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
       osc.start(now);
       osc.stop(now + 0.4);
     }
@@ -185,7 +204,7 @@ export function playAlertTone(type = 'beep') {
  * Fonetik olarak net, kesilmeyen ve doğru Türkçe TTS konuşması yapar
  */
 export function speakText(text) {
-  if (!isSpeechAvailable || !text) return;
+  if (!isSpeechAvailable || !text || alertVolume <= 0.01) return;
 
   try {
     if (!cachedTrVoice) {
@@ -202,7 +221,7 @@ export function speakText(text) {
     utterance.lang = 'tr-TR';
     utterance.rate = 0.95; // Doğal ve anlaşılır konuşma hızı
     utterance.pitch = 1.0;
-    utterance.volume = 1.0;
+    utterance.volume = Math.max(0.1, alertVolume * 0.9);
 
     if (cachedTrVoice) {
       utterance.voice = cachedTrVoice;

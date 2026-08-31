@@ -1,8 +1,8 @@
-// WebRTC Full-Mesh Ses Yöneticisi (MeshManager)
-// Ultra-Düşük Gecikme (10-20ms), Kristal HD Ses & DTX Arka Plan Gürültü Kesici
-
 import { AudioLevelMeter } from './audioMeter.js';
 import { registerPeerName, unregisterPeerName } from './announcer.js';
+import { audioStore } from './audioStateStore.js';
+import { MotorcycleAudioPipeline } from './audioPipeline.js';
+import { LocationTracker } from './locationTracker.js';
 
 const ONLINE_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -20,10 +20,6 @@ function optimizeSDPForZeroLatency(sdp) {
     modified = modified.replace(
       /a=fmtp:(\d+) (.*)/g,
       (match, pt) => {
-        // minptime=10: Anlık 10ms iletim (0 gecikme)
-        // maxaveragebitrate=48000: Kristal netliğinde 48kHz HD ses
-        // usedtx=1: Konuşulmadığında rüzgar/motor hışırtısını %100 keser (Noise Gate)
-        // useinbandfec=1: Wi-Fi paket kayıplarını gecikmesiz onarır
         return `a=fmtp:${pt} minptime=10;ptime=10;maxptime=20;maxaveragebitrate=48000;stereo=0;sprop-stereo=0;useinbandfec=1;usedtx=1;cbr=0`;
       }
     );
@@ -41,45 +37,84 @@ export class MeshManager {
     this.onPeerDisconnect = options.onPeerDisconnect || (() => {});
     this.onPeerReconnect = options.onPeerReconnect || (() => {});
     this.onHornReceived = options.onHornReceived || (() => {});
+    this.onDistanceWarning = options.onDistanceWarning || (() => {});
     this.onStatsUpdate = options.onStatsUpdate || (() => {});
     this.onReconnectionFailed = options.onReconnectionFailed || (() => {});
     this.myPeerId = options.myPeerId || '';
 
     this.peers = new Map();
+    this.rawStream = null;
     this.localStream = null;
+    this.audioPipeline = null;
     this.localLevelMeter = null;
+    this.locationTracker = null;
     this.isMuted = false;
     this.statsInterval = null;
     this._heartbeatInterval = null;
+    this._locationInterval = null;
+    this._deviceChangeHandler = null;
   }
 
   async init() {
     try {
-      // Donanım düzeyinde ses iyileştirme (AEC + Gürültü Engelleme + Otomatik Kazanç)
-      this.localStream = await navigator.mediaDevices.getUserMedia({
+      // 1. Ham Kask Mikrofonu Girişi (Donanım Seviyesi)
+      this.rawStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: { ideal: true },
-          noiseSuppression: { ideal: true },
-          autoGainControl: { ideal: true },
+          noiseSuppression: { ideal: false }, // Pipeline DSP yönetecek
+          autoGainControl: { ideal: false },   // Pipeline Compressor/Limiter yönetecek
           channelCount: 1,
           sampleRate: 48000,
           latency: 0,
-          googEchoCancellation: true,
-          googAutoGainControl: true,
-          googNoiseSuppression: true,
-          googHighpassFilter: true,
-          googTypingNoiseDetection: true,
-          googNoiseReduction: true,
         },
         video: false,
       });
 
-      // Görsel ses barı (UI) için hafif seviye ölçer
+      // 2. Akıllı Motosiklet DSP Ses İşleme Hattı (HighPass 140Hz + EQ + Gate + Limiter)
+      try {
+        this.audioPipeline = new MotorcycleAudioPipeline();
+        this.localStream = await this.audioPipeline.processStream(this.rawStream, (isSpeaking, level) => {
+          const effectiveLevel = this.isMuted ? 0 : level;
+          const effectiveSpeaking = !this.isMuted && isSpeaking;
+          audioStore.setVolume('local', effectiveLevel, effectiveSpeaking);
+          if (this.onLocalVolumeChange) {
+            this.onLocalVolumeChange(effectiveLevel, effectiveSpeaking);
+          }
+        });
+      } catch (pipeErr) {
+        console.warn('[MeshManager] Pipeline yedek moda geçti:', pipeErr.message);
+        this.localStream = this.rawStream;
+      }
+
+      // 3. Görsel ses barı (UI) için hafif seviye ölçer
       this.localLevelMeter = new AudioLevelMeter(this.localStream, (level, isSpeaking) => {
+        const effectiveLevel = this.isMuted ? 0 : level;
+        const effectiveSpeaking = !this.isMuted && isSpeaking;
+        audioStore.setVolume('local', effectiveLevel, effectiveSpeaking);
         if (this.onLocalVolumeChange) {
-          this.onLocalVolumeChange(this.isMuted ? 0 : level, !this.isMuted && isSpeaking);
+          this.onLocalVolumeChange(effectiveLevel, effectiveSpeaking);
         }
       });
+
+      // 4. Çevrimdışı GPS Mesafe Takibi Başlat
+      this.locationTracker = new LocationTracker();
+      this.locationTracker.start();
+
+      this._locationInterval = setInterval(() => {
+        if (this.locationTracker && this.locationTracker.currentLocation) {
+          this.broadcastDataChannel({
+            type: 'location',
+            data: this.locationTracker.currentLocation,
+            peerId: this.myPeerId,
+          });
+        }
+      }, 2500);
+
+      // Kayıtlı ses çıkış aygıtı varsa uygula
+      const savedOutput = typeof localStorage !== 'undefined' ? localStorage.getItem('ridetalk_output_device') : null;
+      if (savedOutput) {
+        this.setAudioOutputDevice(savedOutput);
+      }
 
       this._startHeartbeat();
       this.startStatsMonitoring();
@@ -127,9 +162,11 @@ export class MeshManager {
       });
     }
 
+    const savedVol = parseFloat(typeof localStorage !== 'undefined' ? localStorage.getItem('ridetalk_intercom_vol') || '0.8' : '0.8');
     const audioEl = new Audio();
     audioEl.autoplay = true;
     audioEl.playsInline = true;
+    audioEl.volume = Math.max(0, Math.min(1, savedVol));
 
     const isPolite = this.myPeerId ? this.myPeerId > peerId : true;
 
@@ -175,6 +212,7 @@ export class MeshManager {
 
       if (peerEntry.levelMeter) peerEntry.levelMeter.destroy();
       peerEntry.levelMeter = new AudioLevelMeter(remoteStream, (level, isSpeaking) => {
+        audioStore.setVolume(peerId, level, isSpeaking);
         if (this.onPeerVolumeChange) this.onPeerVolumeChange(peerId, level, isSpeaking);
       });
     };
@@ -301,6 +339,22 @@ export class MeshManager {
             if (this.onHornReceived) this.onHornReceived(peerId, peerEntry.name);
             break;
 
+          case 'location': {
+            if (this.locationTracker && msg.data) {
+              const distance = this.locationTracker.updatePeerLocation(peerId, msg.data);
+              if (distance !== null) {
+                peerEntry.distance = distance;
+                this.notifyStateChange(peerId, peerEntry.state);
+                if (this.locationTracker.shouldTriggerWarning(peerId, distance, 65)) {
+                  if (this.onDistanceWarning) {
+                    this.onDistanceWarning(peerId, peerEntry.name, distance);
+                  }
+                }
+              }
+            }
+            break;
+          }
+
           default: break;
         }
       } catch (err) {
@@ -425,6 +479,10 @@ export class MeshManager {
     if (this.localStream) {
       this.localStream.getAudioTracks().forEach((t) => { t.enabled = !isMuted; });
     }
+    if (this.localLevelMeter) {
+      this.localLevelMeter.setPaused(isMuted);
+    }
+    audioStore.setVolume('local', 0, false);
     this.broadcastDataChannel({ type: 'mic-state', isMuted });
   }
 
@@ -488,7 +546,7 @@ export class MeshManager {
           activePeersCount: connectedCount,
         });
       }
-    }, 2000);
+    }, 2500);
   }
 
   removePeer(peerId) {
@@ -500,16 +558,125 @@ export class MeshManager {
       try { entry.pc.close(); } catch (_) {}
       if (entry.audioEl) entry.audioEl.srcObject = null;
       unregisterPeerName(peerId);
+      audioStore.reset(peerId);
       this.peers.delete(peerId);
+    }
+  }
+
+  setIncomingVolume(vol) {
+    const clamped = Math.max(0, Math.min(1, vol));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('ridetalk_intercom_vol', clamped.toString());
+    }
+    this.peers.forEach((entry) => {
+      if (entry.audioEl) {
+        entry.audioEl.volume = clamped;
+      }
+    });
+  }
+
+  async changeAudioInputDevice(deviceId) {
+    if (!deviceId) return;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('ridetalk_input_device', deviceId);
+      }
+      if (this.rawStream) {
+        this.rawStream.getTracks().forEach((t) => t.stop());
+      }
+      this.rawStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: { exact: deviceId },
+          channelCount: 1,
+          sampleRate: 48000,
+          latency: 0,
+        },
+        video: false,
+      });
+
+      if (this.audioPipeline) {
+        this.localStream = await this.audioPipeline.processStream(this.rawStream);
+      } else {
+        this.localStream = this.rawStream;
+      }
+
+      const newTrack = this.localStream.getAudioTracks()[0];
+      if (newTrack) {
+        this.peers.forEach((peerEntry) => {
+          if (peerEntry.pc) {
+            const senders = peerEntry.pc.getSenders();
+            const audioSender = senders.find((s) => s.track && s.track.kind === 'audio');
+            if (audioSender) {
+              audioSender.replaceTrack(newTrack);
+            }
+          }
+        });
+      }
+      console.log('[MeshManager] 🎤 Giriş mikrofonu güncellendi:', deviceId);
+    } catch (err) {
+      console.warn('[MeshManager] Mikrofon değiştirilemedi:', err);
+    }
+  }
+
+  async setAudioOutputDevice(deviceId) {
+    if (!deviceId) return;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('ridetalk_output_device', deviceId);
+      }
+      this.peers.forEach(async (peerEntry) => {
+        if (peerEntry.audioEl && typeof peerEntry.audioEl.setSinkId === 'function') {
+          try {
+            await peerEntry.audioEl.setSinkId(deviceId);
+          } catch (_) {}
+        }
+      });
+      console.log('[MeshManager] 🔊 Çıkış hoparlörü güncellendi:', deviceId);
+    } catch (err) {
+      console.warn('[MeshManager] Hoparlör değiştirilemedi:', err);
+    }
+  }
+
+  static async getAvailableAudioDevices() {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return { inputs: [], outputs: [] };
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter((d) => d.kind === 'audioinput');
+      const outputs = devices.filter((d) => d.kind === 'audiooutput');
+      return { inputs, outputs };
+    } catch (err) {
+      console.warn('[MeshManager] Aygıtlar listelenemedi:', err);
+      return { inputs: [], outputs: [] };
     }
   }
 
   destroy() {
     if (this.statsInterval) clearInterval(this.statsInterval);
     if (this._heartbeatInterval) clearInterval(this._heartbeatInterval);
+    if (this._locationInterval) clearInterval(this._locationInterval);
+    if (this.locationTracker) {
+      this.locationTracker.destroy();
+      this.locationTracker = null;
+    }
+    if (this._deviceChangeHandler && typeof navigator !== 'undefined' && navigator.mediaDevices) {
+      try {
+        navigator.mediaDevices.removeEventListener('devicechange', this._deviceChangeHandler);
+      } catch (_) {}
+    }
     this.peers.forEach((_, pid) => this.removePeer(pid));
     this.peers.clear();
+    audioStore.reset();
     if (this.localLevelMeter) { this.localLevelMeter.destroy(); this.localLevelMeter = null; }
+    if (this.audioPipeline) {
+      try { this.audioPipeline.destroy(); } catch (_) {}
+      this.audioPipeline = null;
+    }
+    if (this.rawStream) {
+      this.rawStream.getTracks().forEach((t) => t.stop());
+      this.rawStream = null;
+    }
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;

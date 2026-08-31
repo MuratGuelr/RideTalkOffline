@@ -1,58 +1,72 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react';
 import ParticipantCard from './ParticipantCard.jsx';
-import ConnectionQualityBadge from './ConnectionQualityBadge.jsx';
-import HotspotGuideModal from './HotspotGuideModal.jsx';
+import SettingsSheet from './SettingsSheet.jsx';
 import {
   Mic,
   MicOff,
   Bell,
   Radio,
   PhoneOff,
-  Lock,
-  LockOpen,
-  Volume2,
-  Users,
+  Settings,
   X,
-  Maximize,
-  Minimize,
   AlertTriangle,
-  Zap,
   ArrowLeft,
-  Moon,
   ShieldCheck,
   Activity,
+  ChevronUp,
+  Lock,
+  LockOpen,
+  Sliders,
+  Users,
+  Zap,
+  Moon,
 } from 'lucide-react';
+import { audioStore } from '../lib/audioStateStore.js';
+import { keepScreenAwake, releaseScreenAwake } from '../lib/wakeLock.js';
 
-export default function ActiveRoom({
-  roomCode,
-  selfName,
-  peers,
-  localVolume,
-  localIsSpeaking,
-  peerVolumes,
-  isMuted,
+function ActiveRoom({
+  roomCode = 'MOTO-RIDE',
+  selfName = 'Sen',
+  peers = {},
+  isMuted = false,
   onToggleMute,
   onSendHorn,
   onLeaveRoom,
+  onIntercomVolumeChange,
+  onAudioInputDeviceChange,
+  onAudioOutputDeviceChange,
   stats,
   isWakeLockActive,
-  isOnline,
   toastMessage,
 }) {
-  const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLeaveConfirmOpen, setIsLeaveConfirmOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hornCooldown, setHornCooldown] = useState(false);
 
-  // ⭐ YENİ: OLED Eko Karartma ve Yanlışlıkla Basma Koruması ⭐
+  // ⭐ OLED Eko Karartma ve Yanlışlıkla Basma Koruması ⭐
   const [isBlackoutMode, setIsBlackoutMode] = useState(false);
+  const [isPeeking, setIsPeeking] = useState(false);
   const [isTouchLocked, setIsTouchLocked] = useState(false);
   const [lockHoldProgress, setLockHoldProgress] = useState(0);
+  const [selfIsSpeaking, setSelfIsSpeaking] = useState(false);
+  const [swipeDistance, setSwipeDistance] = useState(0);
 
   const lockTimerRef = useRef(null);
-  const lastBlackoutTapRef = useRef(0);
+  const touchStartYRef = useRef(null);
+  const touchStartTimeRef = useRef(0);
+  const isDraggingRef = useRef(false);
+  const peekTimerRef = useRef(null);
 
   const peerList = Object.entries(peers || {});
+
+  // Eko modda konuşma durumunu dinle
+  useEffect(() => {
+    const unsub = audioStore.subscribe('local', (_, isSpeaking) => {
+      setSelfIsSpeaking(isSpeaking);
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -80,6 +94,20 @@ export default function ActiveRoom({
     }
   };
 
+  const toggleWakeLock = async () => {
+    triggerHaptic([20]);
+    if (isWakeLockActive) {
+      await releaseScreenAwake();
+    } else {
+      await keepScreenAwake();
+    }
+  };
+
+  const toggleTouchLock = () => {
+    triggerHaptic([40]);
+    setIsTouchLocked(!isTouchLocked);
+  };
+
   const triggerHaptic = (pattern = [30]) => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       try {
@@ -102,15 +130,45 @@ export default function ActiveRoom({
     setTimeout(() => setHornCooldown(false), 2000);
   };
 
-  // Eko Mod (OLED Karartma) çift tıklama ile uyanır
-  const handleBlackoutScreenTap = () => {
-    const now = Date.now();
-    if (now - lastBlackoutTapRef.current < 400) {
-      // Çift dokunuldu -> Uyandır
-      triggerHaptic([30, 30]);
-      setIsBlackoutMode(false);
+  // ⭐ YUKARI KAYDIRARAK UYANDIRMA + TEK DOKUNUŞLA CANLANMA (PEEK) ⭐
+  const handleTouchStart = (e) => {
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    touchStartYRef.current = clientY;
+    touchStartTimeRef.current = Date.now();
+    isDraggingRef.current = true;
+    setSwipeDistance(0);
+  };
+
+  const handleTouchMove = (e) => {
+    if (!isDraggingRef.current || touchStartYRef.current === null) return;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const deltaY = touchStartYRef.current - clientY;
+    if (deltaY > 0) {
+      setSwipeDistance(Math.min(100, deltaY));
+    } else {
+      setSwipeDistance(0);
     }
-    lastBlackoutTapRef.current = now;
+  };
+
+  const handleTouchEnd = () => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+
+    const duration = Date.now() - touchStartTimeRef.current;
+    if (swipeDistance < 20 && duration < 300) {
+      setIsPeeking(true);
+      triggerHaptic([20]);
+      if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+      peekTimerRef.current = setTimeout(() => setIsPeeking(false), 3800);
+    }
+
+    if (swipeDistance > 55) {
+      triggerHaptic([40, 40]);
+      setIsBlackoutMode(false);
+      setIsPeeking(false);
+    }
+    setSwipeDistance(0);
+    touchStartYRef.current = null;
   };
 
   // Gidon Kilidini Basılı Tutup Açma (1.2 saniye)
@@ -142,113 +200,103 @@ export default function ActiveRoom({
   };
 
   return (
-    <div className={`active-cockpit ${isBlackoutMode ? 'blackout-active' : ''}`}>
+    <div className={`screen active-screen ${isBlackoutMode ? 'blackout-active' : ''}`}>
       {/* =========================================================
           ⭐ 1. OLED EKO PİL TASARRUFU EKRANI (TAM SİYAH #000000) ⭐
           ========================================================= */}
       {isBlackoutMode && (
-        <div className="oled-blackout-overlay" onClick={handleBlackoutScreenTap}>
+        <div
+          className={`oled-blackout-overlay ${isPeeking ? 'blackout-peeking' : ''}`}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onMouseDown={handleTouchStart}
+          onMouseMove={handleTouchMove}
+          onMouseUp={handleTouchEnd}
+        >
           <div className="blackout-telemetry">
             <div className="blackout-clock">
               {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </div>
 
             <div className="blackout-status-badge">
-              <span className={`blackout-pulse-dot ${localIsSpeaking ? 'speaking' : ''}`}></span>
+              <span className={`blackout-pulse-dot ${selfIsSpeaking ? 'speaking' : ''}`}></span>
               <span>{peerList.length + 1} Sürücü Bağlı (Telsiz Aktif)</span>
             </div>
 
-            {localIsSpeaking && (
+            {selfIsSpeaking && (
               <div className="blackout-speaking-tag">
-                <Activity size={16} className="animate-pulse text-emerald" />
+                <Activity size={16} className="text-emerald" />
                 <span>Sesiniz İletiliyor</span>
               </div>
             )}
+          </div>
 
-            <div className="blackout-hint">
-              <span>⚡ Ekranı uyandırmak için <strong>ÇİFT DOKUNUN</strong></span>
+          <div
+            className="blackout-swipe-dock"
+            style={{
+              transform: `translateY(-${swipeDistance}px)`,
+              opacity: isPeeking ? 1 : Math.max(0.6, 0.6 + (swipeDistance / 100) * 0.4),
+            }}
+          >
+            <div className="swipe-arrow-wrap">
+              <ChevronUp size={28} />
             </div>
+            <span className="swipe-dock-label">
+              {swipeDistance > 50
+                ? 'Bırakın ve Uyandırın'
+                : 'Uyandırmak İçin Yukarı Kaydırın'}
+            </span>
+            <div className="swipe-dock-bar"></div>
           </div>
-        </div>
-      )}
-
-      {/* Üst HUD Çubuğu */}
-      <header className="cockpit-hud-bar">
-        <div className="hud-left">
-          <div className="hud-room-code" title="Aktif Telsiz Odası">
-            <Radio size={16} className="text-neon animate-pulse" />
-            <span className="hud-code-value">{roomCode}</span>
-          </div>
-
-          <button
-            type="button"
-            className={`hud-btn-action ${isFullscreen ? 'active-fullscreen' : ''}`}
-            onClick={toggleFullscreen}
-            title={isFullscreen ? 'Tam Ekrandan Çık' : 'Tam Ekran Modu'}
-          >
-            {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
-            <span className="hide-mobile">{isFullscreen ? 'Küçült' : 'Tam Ekran'}</span>
-          </button>
-        </div>
-
-        <div className="hud-center">
-          <ConnectionQualityBadge
-            isHotspotMode={stats?.isHotspotMode}
-            avgRtt={stats?.avgRtt}
-            activePeersCount={peerList.length}
-            isOnline={isOnline}
-          />
-        </div>
-
-        <div className="hud-right">
-          {/* Eko Karartma Butonu */}
-          <button
-            type="button"
-            className="hud-btn-action btn-eco-dim"
-            onClick={() => {
-              triggerHaptic([30]);
-              setIsBlackoutMode(true);
-            }}
-            title="Ekranı Karart (Maksimum Pil Tasarrufu)"
-          >
-            <Moon size={15} className="text-neon" />
-            <span className="hide-mobile">Eko</span>
-          </button>
-
-          {/* Gidon Kilidi Butonu */}
-          <button
-            type="button"
-            className={`hud-btn-action ${isTouchLocked ? 'btn-lock-active' : ''}`}
-            onClick={() => {
-              triggerHaptic([40]);
-              setIsTouchLocked(!isTouchLocked);
-            }}
-            title={isTouchLocked ? 'Dokunma Kilidini Aç' : 'Gidon Dokunma Kilidini Aç'}
-          >
-            {isTouchLocked ? <Lock size={15} className="text-crimson" /> : <LockOpen size={15} />}
-            <span className="hide-mobile">{isTouchLocked ? 'Kilitli' : 'Kilit'}</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Toast Bildirim Çubuğu */}
-      {toastMessage && (
-        <div className="cockpit-toast animate-slide-down">
-          <Volume2 size={16} className="text-neon" />
-          <span>{toastMessage}</span>
         </div>
       )}
 
       {/* =========================================================
-          ⭐ 2. GİDON DOKUNMA KORUMASI KİLİDİ (TOUCH SHIELD) ⭐
+          ⭐ 2. ÜST BAR: ODA DURUMU + AYARLAR BUTONU ⭐
           ========================================================= */}
+      <div className="main-top">
+        <div className="group-id">
+          <div className="dot" />
+          <div>
+            <div className="name">RideTalk</div>
+            <div className="status">
+              {peerList.length === 0
+                ? 'Telsiz Aktif · P2P'
+                : `Bağlı · ${peerList.length + 1} Sürücü`}
+            </div>
+          </div>
+        </div>
+
+        <div className="top-actions">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => {
+              triggerHaptic([20]);
+              setIsSettingsOpen(true);
+            }}
+            aria-label="Ayarlar"
+            title="Hızlı Ayarlar"
+          >
+            <Settings size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* Toast Bildirim Çubuğu */}
+      {toastMessage && (
+        <div className="cockpit-toast animate-slide-down">
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Gidon Dokunma Kilidi Bannerı */}
       {isTouchLocked && (
-        <div className="touch-lock-shield-banner">
+        <div className="touch-lock-shield-banner animate-slide-down">
           <div className="touch-lock-info">
-            <ShieldCheck size={18} className="text-neon" />
-            <span>
-              <strong>Gidon Kilidi Aktif:</strong> Yanlışlıkla basma engellendi.
-            </span>
+            <ShieldCheck size={16} className="text-neon" />
+            <span>Gidon Kilidi Aktif</span>
           </div>
 
           <button
@@ -263,7 +311,7 @@ export default function ActiveRoom({
             <div
               className="hold-progress-fill"
               style={{ width: `${lockHoldProgress}%` }}
-            ></div>
+            />
             <span className="hold-text">
               {lockHoldProgress > 0 ? 'Açılıyor...' : 'Basılı Tut (Aç)'}
             </span>
@@ -271,97 +319,123 @@ export default function ActiveRoom({
         </div>
       )}
 
-      {/* Sürücüler Tablosu & Canlı Ses Paneli */}
-      <main className="cockpit-main-area">
-        <div className="riders-grid-container">
-          <div className="riders-header">
-            <div className="riders-count">
-              <Users size={16} className="text-neon" />
-              <span>Gruptaki Sürücüler ({peerList.length + 1})</span>
-            </div>
-            <div className="riders-mesh-tag">
-              <Zap size={12} className="text-emerald" />
-              <span>P2P Direct Audio</span>
-            </div>
+      {/* =========================================================
+          ⭐ 3. ORTA ALAN: SÜRÜCÜ KARTLARI (SOLDAN SAĞA GENİŞ KARTLAR) ⭐
+          ========================================================= */}
+      <div className="riders-section-wrap">
+        <div className="riders-section-header">
+          <div className="riders-count-badge">
+            <Users size={14} className="text-neon" />
+            <span>Sürücüler ({peerList.length + 1})</span>
           </div>
-
-          <div className="riders-grid">
-            {/* Kendi Sürücü Kartımız */}
-            <ParticipantCard
-              name={selfName || 'Sen'}
-              isSelf={true}
-              isMuted={isMuted}
-              isSpeaking={localIsSpeaking}
-              volumeLevel={localVolume}
-              connectionState="connected"
-              stats={{ isLocal: true, rtt: stats?.avgRtt || 10 }}
-            />
-
-            {/* Diğer Sürücü Kartları */}
-            {peerList.map(([peerId, peer]) => {
-              const peerVol = peerVolumes[peerId] || { level: 0, isSpeaking: false };
-              return (
-                <ParticipantCard
-                  key={peerId}
-                  name={peer.name || 'Sürücü'}
-                  isSelf={false}
-                  isMuted={peer.isMuted}
-                  isSpeaking={peerVol.isSpeaking}
-                  volumeLevel={peerVol.level}
-                  connectionState={peer.state || 'connected'}
-                  stats={peer.stats || { isLocal: true, rtt: 12 }}
-                />
-              );
-            })}
+          <div className="riders-mesh-tag">
+            <Zap size={12} className="text-emerald" />
+            <span>P2P Direct</span>
           </div>
         </div>
-      </main>
 
-      {/* Eldivenle Kullanıma Özel Dev Alt Kontrol Paneli */}
-      <footer className="cockpit-controls-dock">
-        <div className="controls-grid" style={{ gridTemplateColumns: '1.5fr 1fr 1fr' }}>
-          {/* 1. MİKROFON AÇ / KAPAT */}
+        <div className="riders-list-container">
+          {/* Kendimiz */}
+          <ParticipantCard
+            peerId="local"
+            name={selfName || 'Sen'}
+            isSelf={true}
+            isMuted={isMuted}
+            connectionState="connected"
+            stats={{ isLocal: true, rtt: stats?.avgRtt || 10 }}
+          />
+
+          {/* Diğer Sürücüler */}
+          {peerList.map(([peerId, peer]) => (
+            <ParticipantCard
+              key={peerId}
+              peerId={peerId}
+              name={peer.name || 'Sürücü'}
+              isSelf={false}
+              isMuted={peer.isMuted}
+              connectionState={peer.state || 'connected'}
+              stats={peer.stats || { isLocal: true, rtt: 12 }}
+            />
+          ))}
+
+          {/* Tek Başına İse: Radar Bekleme Kartı */}
+          {peerList.length === 0 && (
+            <div className="radar-waiting-card animate-fade-in">
+              <div className="radar-scanner-circle">
+                <div className="radar-sweep"></div>
+                <div className="radar-center-dot"></div>
+                <Radio size={22} className="radar-icon text-neon" />
+              </div>
+              <div className="radar-text-group">
+                <h4>DİĞER SÜRÜCÜLER BEKLENİYOR</h4>
+                <p>
+                  Aynı Hotspot Wi-Fi ağına bağlanan diğer motorcular anında buraya eklenecektir.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="spacer"></div>
+
+      {/* =========================================================
+          ⭐ 4. ALT DOCK (5 BUTONLU DÜZEN):
+          [1. GİDON KİLİDİ] [2. İKAZ BİP] [3. DEV MİKROFON] [4. AYRIL] [5. UYANIK TUT]
+          ========================================================= */}
+      <div className="control-row-biker">
+        {/* 1. GİDON KİLİDİ (İkaz bip'in solunda, küçük yuvarlak) */}
+        <div className="side-dock-col">
           <button
             type="button"
-            className={`btn-glove-huge ${isMuted ? 'btn-mic-muted' : 'btn-mic-active'} ${
-              isTouchLocked ? 'btn-locked-opacity' : ''
+            className={`side-btn-mini ${isTouchLocked ? 'active-locked' : ''}`}
+            onClick={toggleTouchLock}
+            title={isTouchLocked ? 'Dokunma Kilidini Aç' : 'Gidon Dokunma Kilidi (Yanlış basmayı önler)'}
+          >
+            {isTouchLocked ? <Lock size={16} className="text-crimson" /> : <LockOpen size={16} />}
+          </button>
+          <div className="side-label-mini">Kilit</div>
+        </div>
+
+        {/* 2. İKAZ BİP (Yuvarlak Aksiyon) */}
+        <div className="side-dock-col">
+          <button
+            type="button"
+            className={`side-btn warn ${hornCooldown ? 'cooldown' : ''} ${
+              isTouchLocked ? 'locked' : ''
+            }`}
+            onClick={handleHornClick}
+            disabled={isTouchLocked || hornCooldown}
+            title="Korna / İkaz Bip Gönder"
+          >
+            <Bell size={20} />
+          </button>
+          <div className="side-label">İkaz Bip</div>
+        </div>
+
+        {/* 3. DEV MİKROFON BUTONU (MERKEZ / 92px) */}
+        <div className="mic-col">
+          <button
+            type="button"
+            className={`mic-btn ${isMuted ? 'muted' : 'live'} ${
+              isTouchLocked ? 'locked' : ''
             }`}
             onClick={handleMuteClick}
             disabled={isTouchLocked}
             aria-label={isMuted ? 'Mikrofonu Aç' : 'Mikrofonu Kapat'}
           >
-            {isMuted ? <MicOff size={34} /> : <Mic size={34} className="animate-pulse" />}
-            <div className="glove-btn-text">
-              <span className="control-label-title">
-                {isMuted ? 'MİKROFON KAPALI' : 'MİKROFON AÇIK'}
-              </span>
-              <span className="control-label-sub">
-                {isTouchLocked ? 'Kilitli' : isMuted ? 'Dokun Aç' : 'Canlı İletim'}
-              </span>
-            </div>
+            {isMuted ? <MicOff size={34} /> : <Mic size={34} />}
           </button>
+          <div className={`mic-label ${isMuted ? 'muted' : 'live'}`}>
+            {isMuted ? 'SESSİZ' : 'CANLI'}
+          </div>
+        </div>
 
-          {/* 2. KASK İKAZ TONU BUTONU */}
+        {/* 4. ODADAN AYRIL BUTONU */}
+        <div className="side-dock-col">
           <button
             type="button"
-            className={`btn-glove-action btn-horn ${hornCooldown ? 'cooldown' : ''} ${
-              isTouchLocked ? 'btn-locked-opacity' : ''
-            }`}
-            onClick={handleHornClick}
-            disabled={isTouchLocked || hornCooldown}
-            title="Tüm gruba kask ikaz tonu gönder"
-          >
-            <Bell size={26} />
-            <div className="glove-btn-text">
-              <span className="control-label-title">İKAZ BİP</span>
-              <span className="control-label-sub">{hornCooldown ? 'Bekleyin' : 'Uyar'}</span>
-            </div>
-          </button>
-
-          {/* 3. ODADAN AYRIL BUTONU */}
-          <button
-            type="button"
-            className={`btn-glove-action btn-leave ${isTouchLocked ? 'btn-locked-opacity' : ''}`}
+            className={`side-btn danger ${isTouchLocked ? 'locked' : ''}`}
             onClick={() => {
               if (isTouchLocked) return;
               triggerHaptic([30]);
@@ -370,19 +444,46 @@ export default function ActiveRoom({
             disabled={isTouchLocked}
             title="Telsizden Ayrıl"
           >
-            <PhoneOff size={26} />
-            <div className="glove-btn-text">
-              <span className="control-label-title">AYRIL</span>
-              <span className="control-label-sub">Çıkış Yap</span>
-            </div>
+            <PhoneOff size={20} />
           </button>
+          <div className="side-label">Ayrıl</div>
         </div>
-      </footer>
 
-      {/* Bilgi Modalı */}
-      <HotspotGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
+        {/* 5. OLED MODU (Ayrıl'ın sağında, küçük yuvarlak) */}
+        <div className="side-dock-col">
+          <button
+            type="button"
+            className={`side-btn-mini btn-oled-mini ${isBlackoutMode ? 'active-oled' : ''}`}
+            onClick={() => {
+              triggerHaptic([30]);
+              setIsBlackoutMode(true);
+            }}
+            title="OLED Modu (Ekranı tamamen karartarak pil tasarrufu sağlar)"
+          >
+            <Moon size={16} className="text-neon" />
+          </button>
+          <div className="side-label-mini">OLED</div>
+        </div>
+      </div>
 
-      {/* ⭐ ULTRA-ŞIK MOTORCU ÇIKIŞ ONAY MODALI ⭐ */}
+      {/* Hızlı Ayarlar Sheet (Çekmece) */}
+      <SettingsSheet
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        isBlackoutMode={isBlackoutMode}
+        onToggleBlackout={() => setIsBlackoutMode(!isBlackoutMode)}
+        isTouchLocked={isTouchLocked}
+        onToggleTouchLock={toggleTouchLock}
+        isWakeLockActive={isWakeLockActive}
+        onToggleWakeLock={toggleWakeLock}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={toggleFullscreen}
+        onIntercomVolumeChange={onIntercomVolumeChange}
+        onAudioInputDeviceChange={onAudioInputDeviceChange}
+        onAudioOutputDeviceChange={onAudioOutputDeviceChange}
+      />
+
+      {/* Çıkış Onay Modalı */}
       {isLeaveConfirmOpen && (
         <div
           className="modal-overlay modal-leave-backdrop animate-fade-in"
@@ -401,9 +502,9 @@ export default function ActiveRoom({
             </button>
 
             <div className="leave-icon-hero-wrap">
-              <div className="leave-icon-outer-ring animate-pulse-slow"></div>
+              <div className="leave-icon-outer-ring"></div>
               <div className="leave-icon-inner">
-                <PhoneOff size={32} className="text-crimson" />
+                <PhoneOff size={30} className="text-crimson" />
               </div>
             </div>
 
@@ -413,7 +514,7 @@ export default function ActiveRoom({
                 Telsiz odasından ayrılmak istediğinize emin misiniz?
               </p>
               <div className="leave-modal-sub-badge">
-                <AlertTriangle size={14} className="text-crimson" />
+                <AlertTriangle size={13} className="text-crimson" />
                 <span>Ses bağlantınız anında sonlandırılır.</span>
               </div>
             </div>
@@ -427,8 +528,8 @@ export default function ActiveRoom({
                   setIsLeaveConfirmOpen(false);
                 }}
               >
-                <ArrowLeft size={20} />
-                <span>Sürüşe Devam</span>
+                <ArrowLeft size={18} />
+                <span>Devam Et</span>
               </button>
 
               <button
@@ -440,7 +541,7 @@ export default function ActiveRoom({
                   onLeaveRoom();
                 }}
               >
-                <PhoneOff size={20} />
+                <PhoneOff size={18} />
                 <span>Evet, Ayrıl</span>
               </button>
             </div>
@@ -450,3 +551,5 @@ export default function ActiveRoom({
     </div>
   );
 }
+
+export default memo(ActiveRoom);
