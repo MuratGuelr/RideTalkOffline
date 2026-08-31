@@ -193,10 +193,7 @@ export default function App() {
               name: info.name,
               state: info.state,
               isMuted: info.isMuted,
-              stats: {
-                ...info.stats,
-                distance: info.distance,
-              },
+              stats: info.stats,
             },
           }));
         },

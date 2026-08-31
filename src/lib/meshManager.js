@@ -97,7 +97,22 @@ export class MeshManager {
       });
 
       // 4. Çevrimdışı GPS Mesafe Takibi Başlat
-      this.locationTracker = new LocationTracker();
+      this.locationTracker = new LocationTracker((myLoc) => {
+        if (myLoc) {
+          this.broadcastDataChannel({
+            type: 'location',
+            data: myLoc,
+            peerId: this.myPeerId,
+          });
+          this.peers.forEach((peerEntry, peerId) => {
+            const dist = this.locationTracker.getDistanceToPeer(peerId);
+            if (dist !== null) {
+              peerEntry.distance = dist;
+              this.notifyStateChange(peerId, peerEntry.state);
+            }
+          });
+        }
+      });
       this.locationTracker.start();
 
       this._locationInterval = setInterval(() => {
@@ -108,7 +123,7 @@ export class MeshManager {
             peerId: this.myPeerId,
           });
         }
-      }, 2500);
+      }, 3000);
 
       // Kayıtlı ses çıkış aygıtı varsa uygula
       const savedOutput = typeof localStorage !== 'undefined' ? localStorage.getItem('ridetalk_output_device') : null;
@@ -294,6 +309,15 @@ export class MeshManager {
 
     dc.onopen = () => {
       try { dc.send(JSON.stringify({ type: 'mic-state', isMuted: this.isMuted })); } catch (_) {}
+      if (this.locationTracker && this.locationTracker.currentLocation) {
+        try {
+          dc.send(JSON.stringify({
+            type: 'location',
+            data: this.locationTracker.currentLocation,
+            peerId: this.myPeerId,
+          }));
+        } catch (_) {}
+      }
     };
 
     dc.onmessage = async (event) => {
@@ -507,11 +531,14 @@ export class MeshManager {
   notifyStateChange(peerId, state) {
     if (this.onPeerStateChange) {
       const entry = this.peers.get(peerId);
+      const statsObj = entry
+        ? { ...(entry.stats || {}), distance: entry.distance !== undefined ? entry.distance : null }
+        : null;
       this.onPeerStateChange(peerId, {
         state,
         name: entry ? entry.name : 'Sürücü',
         isMuted: entry ? entry.isMuted : false,
-        stats: entry ? entry.stats : null,
+        stats: statsObj,
       });
     }
   }
@@ -539,7 +566,13 @@ export class MeshManager {
               isLocal = !lc || lc.candidateType === 'host';
             }
             if (rtt > 0) { totalRtt += rtt; rttCount++; }
-            entry.stats = { rtt, packetLoss: 0, candidateType: isLocal ? 'host' : 'srflx', isLocal };
+            entry.stats = {
+              rtt,
+              packetLoss: 0,
+              candidateType: isLocal ? 'host' : 'srflx',
+              isLocal,
+              distance: entry.distance !== undefined ? entry.distance : null,
+            };
             this.notifyStateChange(peerId, entry.state);
           } catch (_) {}
         }

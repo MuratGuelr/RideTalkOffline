@@ -3,7 +3,14 @@
 
 // Haversine Formülü: İki koordinat arası mesafeyi metre cinsinden hesaplar
 export function calculateDistanceInMeters(lat1, lon1, lat2, lon2) {
-  if (!lat1 || !lon1 || !lat2 || !lon2) return null;
+  if (
+    lat1 === undefined || lat1 === null ||
+    lon1 === undefined || lon1 === null ||
+    lat2 === undefined || lat2 === null ||
+    lon2 === undefined || lon2 === null
+  ) {
+    return null;
+  }
 
   const R = 6371000; // Dünya yarıçapı (metre)
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -27,38 +34,72 @@ export class LocationTracker {
     this.currentLocation = null;
     this.peerLocations = new Map(); // peerId -> { lat, lon, speed, accuracy, ts }
     this.warningCooldowns = new Map(); // peerId -> timestamp
+    this.isHighAccuracy = true;
+    this.permissionState = 'prompt';
   }
 
-  start() {
+  async start() {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       console.warn('[LocationTracker] Geolocation bu cihazda desteklenmiyor.');
       return;
     }
 
-    this.watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const { latitude, longitude, speed, accuracy } = position.coords;
-        this.currentLocation = {
-          lat: latitude,
-          lon: longitude,
-          speed: speed ? Math.round(speed * 3.6) : 0, // km/s
-          accuracy: Math.round(accuracy || 0),
-          ts: Date.now(),
-        };
+    const handleSuccess = (position) => {
+      const { latitude, longitude, speed, accuracy } = position.coords;
+      this.currentLocation = {
+        lat: latitude,
+        lon: longitude,
+        speed: speed ? Math.round(speed * 3.6) : 0, // km/s
+        accuracy: Math.round(accuracy || 0),
+        ts: Date.now(),
+      };
 
-        if (this.onLocationUpdate) {
-          this.onLocationUpdate(this.currentLocation);
-        }
-      },
-      (err) => {
-        console.warn('[LocationTracker] GPS konumu alınamadı:', err.message);
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 3000,
-        timeout: 10000,
+      console.log(`[LocationTracker] 📍 GPS Konumu Alındı: ${latitude.toFixed(5)}, ${longitude.toFixed(5)} (Hassasiyet: ${this.currentLocation.accuracy}m)`);
+
+      if (this.onLocationUpdate) {
+        this.onLocationUpdate(this.currentLocation);
       }
-    );
+    };
+
+    const handleError = (err) => {
+      console.warn('[LocationTracker] GPS uyarısı/hatası:', err.message);
+      // High accuracy başarısız olduysa standart GPS moduna geç
+      if (this.isHighAccuracy) {
+        this.isHighAccuracy = false;
+        this._startWatcher(handleSuccess, null, false);
+      }
+    };
+
+    // 1. Anında ilk konumu al (beklemeden)
+    navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
+      enableHighAccuracy: true,
+      timeout: 8000,
+      maximumAge: 10000,
+    });
+
+    // 2. Canlı GPS izleyicisini başlat
+    this._startWatcher(handleSuccess, handleError, true);
+  }
+
+  _startWatcher(onSuccess, onError, highAccuracy = true) {
+    if (this.watchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.clearWatch(this.watchId);
+      this.watchId = null;
+    }
+
+    try {
+      this.watchId = navigator.geolocation.watchPosition(
+        onSuccess,
+        onError || ((e) => console.warn('[LocationTracker] GPS:', e.message)),
+        {
+          enableHighAccuracy: highAccuracy,
+          maximumAge: 5000,
+          timeout: 20000,
+        }
+      );
+    } catch (err) {
+      console.warn('[LocationTracker] watchPosition başlatılamadı:', err);
+    }
   }
 
   updatePeerLocation(peerId, locationData) {
