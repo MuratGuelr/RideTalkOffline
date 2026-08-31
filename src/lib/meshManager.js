@@ -168,6 +168,11 @@ export class MeshManager {
     audioEl.playsInline = true;
     audioEl.volume = Math.max(0, Math.min(1, savedVol));
 
+    const savedOutput = typeof localStorage !== 'undefined' ? localStorage.getItem('ridetalk_output_device') : null;
+    if (savedOutput && typeof audioEl.setSinkId === 'function') {
+      audioEl.setSinkId(savedOutput).catch(() => {});
+    }
+
     const isPolite = this.myPeerId ? this.myPeerId > peerId : true;
 
     const peerEntry = {

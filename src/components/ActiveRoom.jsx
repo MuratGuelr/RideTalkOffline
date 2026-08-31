@@ -69,6 +69,13 @@ function ActiveRoom({
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (lockTimerRef.current) clearInterval(lockTimerRef.current);
+      if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
